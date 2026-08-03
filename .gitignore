@@ -1,0 +1,19 @@
+# macOS / Xcode
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Android / Gradle
+.gradle/
+local.properties
+**/build/
+.idea/
+*.iml
+
+# Secrets and generated voice data
+.env
+*.keystore
+*.jks
+voice-models/
+downloads/
