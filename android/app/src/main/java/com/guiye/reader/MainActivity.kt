@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.guiye.reader
 
 import android.os.Bundle
@@ -52,7 +54,7 @@ private fun LibraryScreen(vm: ReaderViewModel) {
     }
     Scaffold(
         topBar = { TopAppBar(title = { Text("归页") }, actions = { TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") } }) },
-        floatingActionButton = { ExtendedFloatingActionButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }, text = { Text("导入书籍") }) }
+        floatingActionButton = { FloatingActionButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("＋") } }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().background(Paper).padding(horizontal = 20.dp)) {
             Text("我的书库", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 18.dp))
