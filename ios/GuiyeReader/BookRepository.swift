@@ -22,9 +22,9 @@ final class BookRepository: ObservableObject {
         guard book.format == .txt, let data = try? Data(contentsOf: book.localURL) else {
             return [book.format == .epub ? "EPUB 已安全导入本地书库。Readium 导航器正在接入。" : "PDF 已安全导入本地书库。PDF 导航器正在接入。"]
         }
-        let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) ?? String(data: data, encoding: .gb_18030_2000) ?? "无法识别文本编码"
+        let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) ?? String(data: data, encoding: .isoLatin1) ?? "无法识别文本编码"
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
-        return normalized.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return normalized.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
     private func importFile(_ source: URL) throws {

@@ -2,7 +2,7 @@ import Foundation
 
 @MainActor
 final class ReaderViewModel: ObservableObject {
-    static let sampleParagraphs = [
+    nonisolated static let sampleParagraphs = [
         "阅读不是把文字从第一页搬到最后一页，而是在阅读过程中不断建立连接。",
         "本地优先意味着书籍、进度和笔记首先保存在用户自己的设备上。即使没有网络，阅读和朗读也应该完整可用。",
         "When a paragraph changes language, the speech queue can select a matching voice automatically without interrupting the reading flow.",

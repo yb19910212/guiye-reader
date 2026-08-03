@@ -1,7 +1,7 @@
 import AVFoundation
 import Foundation
 
-final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDelegate {
+final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     private let synthesizer = AVSpeechSynthesizer()
     private var queue: [SpeechSegment] = []
     private var currentIndex = 0
