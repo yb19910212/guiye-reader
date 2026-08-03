@@ -21,8 +21,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.guiye.reader.library.Book
+import com.guiye.reader.library.BookFormat
+import com.guiye.reader.pdf.PdfPageView
 import com.guiye.reader.speech.SpeechState
 
 private val Paper = Color(0xFFF6F3EA)
@@ -44,7 +47,36 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun GuiyeApp(vm: ReaderViewModel = viewModel()) {
-    if (vm.currentBook == null) LibraryScreen(vm) else ReaderScreen(vm)
+    when (vm.currentBook?.format) {
+        null -> LibraryScreen(vm)
+        BookFormat.PDF -> PdfReaderScreen(vm, vm.currentBook!!)
+        else -> ReaderScreen(vm)
+    }
+}
+
+@Composable
+private fun PdfReaderScreen(vm: ReaderViewModel, book: Book) {
+    var page by remember(book.id) { mutableIntStateOf(vm.pdfPage(book)) }
+    var pageCount by remember(book.id) { mutableIntStateOf(1) }
+    LaunchedEffect(page, pageCount) { vm.savePdfPage(book, page, pageCount) }
+    Scaffold(
+        topBar = { TopAppBar(title = { Text(book.title) }, navigationIcon = { TextButton(onClick = vm::closeBook) { Text("‹ 书库") } }) },
+        bottomBar = {
+            Surface(tonalElevation = 4.dp) {
+                Row(Modifier.navigationBarsPadding().fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = { page = (page - 1).coerceAtLeast(0) }, enabled = page > 0) { Text("上一页") }
+                    Text("${page + 1} / $pageCount")
+                    TextButton(onClick = { page = (page + 1).coerceAtMost(pageCount - 1) }, enabled = page + 1 < pageCount) { Text("下一页") }
+                }
+            }
+        }
+    ) { padding ->
+        AndroidView(
+            factory = { context -> PdfPageView(context, java.io.File(book.localPath)).also { pageCount = it.pageCount; page = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0)); it.showPage(page) } },
+            update = { it.showPage(page) },
+            modifier = Modifier.padding(padding).fillMaxSize()
+        )
+    }
 }
 
 @Composable
@@ -134,7 +166,7 @@ private fun ReaderScreen(vm: ReaderViewModel) {
             Text(vm.currentBook?.title ?: "阅读", style = MaterialTheme.typography.headlineMedium, color = Ink)
             Text("${vm.currentBook?.format?.name} · 本地文件", color = Moss, modifier = Modifier.padding(top = 8.dp, bottom = 22.dp))
             vm.paragraphs.forEachIndexed { index, paragraph ->
-                Text(paragraph, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif), modifier = Modifier.fillMaxWidth().background(if (index == vm.currentParagraph && vm.speechState != SpeechState.IDLE) Highlight else Color.Transparent, RoundedCornerShape(8.dp)).clickable { vm.currentParagraph = index }.padding(10.dp), color = Ink)
+                Text(paragraph, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif), modifier = Modifier.fillMaxWidth().background(if (index == vm.currentParagraph && vm.speechState != SpeechState.IDLE) Highlight else Color.Transparent, RoundedCornerShape(8.dp)).clickable { vm.selectParagraph(index) }.padding(10.dp), color = Ink)
                 Spacer(Modifier.height(8.dp))
             }
         }

@@ -27,6 +27,12 @@ final class BookRepository: ObservableObject {
         return normalized.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
+    func updateProgress(bookID: String, progress: Double) {
+        guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
+        books[index].progress = min(max(progress, 0), 1)
+        try? persist()
+    }
+
     private func importFile(_ source: URL) throws {
         let access = source.startAccessingSecurityScopedResource()
         defer { if access { source.stopAccessingSecurityScopedResource() } }

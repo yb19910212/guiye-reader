@@ -49,6 +49,10 @@ class BookRepository(private val context: Context) {
         }.trim()
     }
 
+    fun updateProgress(bookId: String, progress: Float) {
+        save(allBooks().map { if (it.id == bookId) it.copy(progress = progress.coerceIn(0f, 1f)) else it })
+    }
+
     private fun save(books: List<Book>) {
         val array = JSONArray(); books.distinctBy { it.id }.forEach { array.put(it.toJson()) }
         prefs.edit().putString("books", array.toString()).apply()

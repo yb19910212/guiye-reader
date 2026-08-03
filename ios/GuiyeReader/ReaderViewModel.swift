@@ -20,10 +20,11 @@ final class ReaderViewModel: ObservableObject {
     var voices: [SpeechVoice] { engine.voices }
     private var segments: [SpeechSegment] { paragraphs.enumerated().map { SpeechSegment(id: $0.offset, text: $0.element, languageTag: detectedLanguage(for: $0.element)) } }
 
-    init(title: String = "为什么阅读需要一个闭环", paragraphs: [String] = ReaderViewModel.sampleParagraphs, engine: SystemSpeechEngine = SystemSpeechEngine()) {
+    init(title: String = "为什么阅读需要一个闭环", paragraphs: [String] = ReaderViewModel.sampleParagraphs, startIndex: Int = 0, engine: SystemSpeechEngine = SystemSpeechEngine()) {
         self.title = title
         self.paragraphs = paragraphs.isEmpty ? ["文件内容为空"] : paragraphs
         self.engine = engine
+        self.currentParagraph = min(max(0, startIndex), self.paragraphs.count - 1)
         engine.onSegmentStarted = { [weak self] index in Task { @MainActor in self?.currentParagraph = index } }
         engine.onQueueCompleted = { [weak self] in Task { @MainActor in self?.playbackState = .idle } }
     }

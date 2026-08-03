@@ -18,7 +18,13 @@ struct LibraryView: View {
                 .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .pdf, epubType], allowsMultipleSelection: true) { result in
                     switch result { case .success(let urls): repository.importFiles(urls); case .failure(let error): repository.lastError = error.localizedDescription }
                 }
-                .navigationDestination(item: $selectedBook) { book in ReaderView(book: book, paragraphs: repository.paragraphs(for: book)) }
+                .navigationDestination(item: $selectedBook) { book in
+                    if book.format == .pdf {
+                        PDFReaderView(book: book) { repository.updateProgress(bookID: book.id, progress: $0) }
+                    } else {
+                        ReaderView(book: book, paragraphs: repository.paragraphs(for: book)) { repository.updateProgress(bookID: book.id, progress: $0) }
+                    }
+                }
         }.tint(moss)
     }
 

@@ -25,6 +25,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         "高亮和批注不应该困在应用里。它们需要保留来源、可以搜索，也可以导出到用户选择的知识工具中。"
     )
     private val repository = BookRepository(application)
+    private val positionPrefs = application.getSharedPreferences("guiye_positions", android.content.Context.MODE_PRIVATE)
     var books by mutableStateOf(repository.allBooks())
     var currentBook by mutableStateOf<Book?>(null)
     var importError by mutableStateOf<String?>(null)
@@ -41,7 +42,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val engine: AndroidTtsEngine by lazy {
         AndroidTtsEngine(
             application,
-            onSegmentStarted = { currentParagraph = it },
+        onSegmentStarted = { selectParagraph(it) },
             onQueueCompleted = { speechState = SpeechState.IDLE },
             onReady = { voices = engineVoices() }
         )
@@ -59,17 +60,32 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openBook(book: Book) {
         currentBook = book
-        currentParagraph = 0
         paragraphs = if (book.format == BookFormat.TXT) {
             repository.readText(book).getOrNull()?.split(Regex("\\n\\s*\\n|(?<=[。！？.!?])\\s+"))?.map { it.trim() }?.filter { it.isNotBlank() } ?: listOf("文件内容为空")
         } else {
             listOf(if (book.format == BookFormat.EPUB) "EPUB 已安全导入本地书库。Readium 导航器正在接入。" else "PDF 已安全导入本地书库。PDF 导航器正在接入。")
         }
+        currentParagraph = positionPrefs.getInt("text.${book.id}", 0).coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
         stopSpeech()
     }
 
     fun closeBook() { stopSpeech(); currentBook = null; paragraphs = sampleParagraphs }
     private fun stopSpeech() { engine.stop(); speechState = SpeechState.IDLE }
+
+    fun selectParagraph(index: Int) {
+        currentParagraph = index.coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
+        currentBook?.let { book ->
+            positionPrefs.edit().putInt("text.${book.id}", currentParagraph).apply()
+            val progress = if (paragraphs.size <= 1) 0f else currentParagraph.toFloat() / (paragraphs.size - 1)
+            repository.updateProgress(book.id, progress); books = repository.allBooks()
+        }
+    }
+
+    fun pdfPage(book: Book): Int = positionPrefs.getInt("pdf.${book.id}", 0)
+    fun savePdfPage(book: Book, page: Int, pageCount: Int) {
+        positionPrefs.edit().putInt("pdf.${book.id}", page).apply()
+        repository.updateProgress(book.id, if (pageCount <= 1) 0f else page.toFloat() / (pageCount - 1)); books = repository.allBooks()
+    }
 
     fun playOrPause() {
         when (speechState) {
@@ -79,8 +95,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun previous() { currentParagraph = (currentParagraph - 1).coerceAtLeast(0); restartIfActive() }
-    fun next() { currentParagraph = (currentParagraph + 1).coerceAtMost(paragraphs.lastIndex); restartIfActive() }
+    fun previous() { selectParagraph((currentParagraph - 1).coerceAtLeast(0)); restartIfActive() }
+    fun next() { selectParagraph((currentParagraph + 1).coerceAtMost(paragraphs.lastIndex)); restartIfActive() }
     fun chooseVoice(id: String?) { selectedVoiceId = id; restartIfActive() }
     fun updateRate(value: Float) { rate = value; restartIfActive() }
     private fun restartIfActive() {

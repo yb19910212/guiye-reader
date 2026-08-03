@@ -2,12 +2,18 @@ import SwiftUI
 
 struct ReaderView: View {
     @StateObject private var model: ReaderViewModel
+    private let bookID: String?
+    private let onProgress: (Double) -> Void
     private let paper = Color(red: 0.965, green: 0.953, blue: 0.918)
     private let ink = Color(red: 0.118, green: 0.169, blue: 0.141)
     private let moss = Color(red: 0.192, green: 0.373, blue: 0.286)
 
-    init(book: Book? = nil, paragraphs: [String]? = nil) {
-        _model = StateObject(wrappedValue: ReaderViewModel(title: book?.title ?? "为什么阅读需要一个闭环", paragraphs: paragraphs ?? ReaderViewModel.sampleParagraphs))
+    init(book: Book? = nil, paragraphs: [String]? = nil, onProgress: @escaping (Double) -> Void = { _ in }) {
+        let id = book?.id
+        self.bookID = id
+        self.onProgress = onProgress
+        let start = id.map { UserDefaults.standard.integer(forKey: "text.\($0)") } ?? 0
+        _model = StateObject(wrappedValue: ReaderViewModel(title: book?.title ?? "为什么阅读需要一个闭环", paragraphs: paragraphs ?? ReaderViewModel.sampleParagraphs, startIndex: start))
     }
 
     var body: some View {
@@ -41,6 +47,8 @@ struct ReaderView: View {
                 }
                 .onChange(of: model.currentParagraph) { _, index in
                     withAnimation { proxy.scrollTo(index, anchor: .center) }
+                    if let bookID { UserDefaults.standard.set(index, forKey: "text.\(bookID)") }
+                    onProgress(model.paragraphs.count <= 1 ? 0 : Double(index) / Double(model.paragraphs.count - 1))
                 }
             }
             .background(paper)
