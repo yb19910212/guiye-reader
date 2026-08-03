@@ -13,6 +13,17 @@ struct LibraryView: View {
         NavigationStack {
             Group { repository.books.isEmpty ? AnyView(emptyState) : AnyView(bookList) }
                 .background(paper)
+                .overlay(alignment: .top) {
+                    if let progress = repository.importProgress {
+                        VStack(spacing: 6) {
+                            ProgressView(value: progress)
+                            Text(repository.importStatus ?? "正在导入").font(.caption).lineLimit(1)
+                        }
+                        .padding(12)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        .padding()
+                    }
+                }
                 .navigationTitle("归页")
                 .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("导入") { importing = true } } }
                 .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .pdf, epubType], allowsMultipleSelection: true) { result in

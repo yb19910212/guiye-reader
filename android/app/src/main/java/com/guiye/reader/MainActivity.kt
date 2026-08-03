@@ -82,7 +82,7 @@ private fun PdfReaderScreen(vm: ReaderViewModel, book: Book) {
 @Composable
 private fun LibraryScreen(vm: ReaderViewModel) {
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        uris.forEach(vm::importBook)
+        vm.importBooks(uris)
     }
     Scaffold(
         topBar = { TopAppBar(title = { Text("归页") }, actions = { TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") } }) },
@@ -92,6 +92,10 @@ private fun LibraryScreen(vm: ReaderViewModel) {
             Text("我的书库", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 18.dp))
             Text("书籍保存在本机 · EPUB / PDF / TXT", color = Moss, modifier = Modifier.padding(top = 5.dp, bottom = 20.dp))
             vm.importError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 12.dp)) }
+            if (vm.importState.isImporting) {
+                LinearProgressIndicator(progress = { vm.importState.progress }, modifier = Modifier.fillMaxWidth())
+                Text("正在导入 ${vm.importState.current + 1}/${vm.importState.total} · ${vm.importState.fileName}", modifier = Modifier.padding(vertical = 8.dp))
+            }
             if (vm.books.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {

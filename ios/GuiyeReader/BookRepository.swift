@@ -5,6 +5,8 @@ import Foundation
 final class BookRepository: ObservableObject {
     @Published private(set) var books: [Book] = []
     @Published var lastError: String?
+    @Published private(set) var importProgress: Double?
+    @Published private(set) var importStatus: String?
     private let manager = FileManager.default
     private lazy var root = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("GuiyeReader", isDirectory: true)
     private var booksDirectory: URL { root.appendingPathComponent("Books", isDirectory: true) }
@@ -13,8 +15,21 @@ final class BookRepository: ObservableObject {
     init() { load() }
 
     func importFiles(_ urls: [URL]) {
-        for url in urls {
-            do { try importFile(url) } catch { lastError = error.localizedDescription }
+        guard importProgress == nil, !urls.isEmpty else { return }
+        Task {
+            lastError = nil
+            var duplicates = 0
+            for (index, url) in urls.enumerated() {
+                importProgress = Double(index) / Double(urls.count)
+                importStatus = "正在导入 \(index + 1)/\(urls.count) · \(url.lastPathComponent)"
+                do {
+                    if try await importFile(url) { duplicates += 1 }
+                } catch {
+                    lastError = error.localizedDescription
+                }
+            }
+            importProgress = nil
+            importStatus = duplicates > 0 ? "导入完成，已跳过 \(duplicates) 本重复书籍" : "已导入 \(urls.count) 本书"
         }
     }
 
@@ -33,18 +48,32 @@ final class BookRepository: ObservableObject {
         try? persist()
     }
 
-    private func importFile(_ source: URL) throws {
-        let access = source.startAccessingSecurityScopedResource()
-        defer { if access { source.stopAccessingSecurityScopedResource() } }
+    private func importFile(_ source: URL) async throws -> Bool {
         guard let format = BookFormat(rawValue: source.pathExtension.lowercased()) else { throw ImportError.unsupported }
-        let data = try Data(contentsOf: source, options: .mappedIfSafe)
-        let id = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        guard !books.contains(where: { $0.id == id }) else { return }
         try manager.createDirectory(at: booksDirectory, withIntermediateDirectories: true)
+        let temporary = booksDirectory.appendingPathComponent("import-\(UUID().uuidString).\(format.rawValue)")
+        let result = try await Task.detached { () -> (String, Int64) in
+            let access = source.startAccessingSecurityScopedResource()
+            defer { if access { source.stopAccessingSecurityScopedResource() } }
+            let values = try source.resourceValues(forKeys: [.fileSizeKey])
+            if let size = values.fileSize, size > 2_147_483_648 { throw ImportError.tooLarge }
+            try FileManager.default.copyItem(at: source, to: temporary)
+            let handle = try FileHandle(forReadingFrom: temporary)
+            defer { try? handle.close() }
+            var hash = SHA256()
+            while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty { hash.update(data: chunk) }
+            let id = hash.finalize().map { String(format: "%02x", $0) }.joined()
+            let size = Int64((try temporary.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0)
+            if size > 2_147_483_648 { throw ImportError.tooLarge }
+            return (id, size)
+        }.value
+        let (id, fileSize) = result
+        guard !books.contains(where: { $0.id == id }) else { try? manager.removeItem(at: temporary); return true }
         let destination = booksDirectory.appendingPathComponent("\(id).\(format.rawValue)")
-        try data.write(to: destination, options: .atomic)
-        books.insert(Book(id: id, title: source.deletingPathExtension().lastPathComponent, author: nil, format: format, localPath: destination.path, fileSize: Int64(data.count), importedAt: Date(), progress: 0), at: 0)
+        try manager.moveItem(at: temporary, to: destination)
+        books.insert(Book(id: id, title: source.deletingPathExtension().lastPathComponent, author: nil, format: format, localPath: destination.path, fileSize: fileSize, importedAt: Date(), progress: 0), at: 0)
         try persist(); lastError = nil
+        return false
     }
 
     private func load() {
@@ -58,6 +87,11 @@ final class BookRepository: ObservableObject {
 }
 
 enum ImportError: LocalizedError {
-    case unsupported
-    var errorDescription: String? { "首版仅支持 EPUB、PDF 和 TXT" }
+    case unsupported, tooLarge
+    var errorDescription: String? {
+        switch self {
+        case .unsupported: return "首版仅支持 EPUB、PDF 和 TXT"
+        case .tooLarge: return "单个文件暂不能超过 2 GB"
+        }
+    }
 }

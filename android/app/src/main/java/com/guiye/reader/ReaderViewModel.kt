@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import com.guiye.reader.library.Book
 import com.guiye.reader.library.BookFormat
 import com.guiye.reader.library.BookRepository
@@ -15,6 +16,19 @@ import com.guiye.reader.speech.SpeechSegment
 import com.guiye.reader.speech.SpeechState
 import com.guiye.reader.speech.SpeechVoice
 import com.guiye.reader.speech.detectLanguage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+data class ImportUiState(
+    val current: Int = 0,
+    val total: Int = 0,
+    val fileName: String = "",
+    val duplicateCount: Int = 0
+) {
+    val isImporting: Boolean get() = total > 0 && current < total
+    val progress: Float get() = if (total == 0) 0f else current.toFloat() / total
+}
 
 class ReaderViewModel(application: Application) : AndroidViewModel(application) {
     private val sampleParagraphs = listOf(
@@ -29,6 +43,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var books by mutableStateOf(repository.allBooks())
     var currentBook by mutableStateOf<Book?>(null)
     var importError by mutableStateOf<String?>(null)
+    var importState by mutableStateOf(ImportUiState())
+        private set
     var paragraphs by mutableStateOf(sampleParagraphs)
         private set
     private val segments get() = paragraphs.mapIndexed { i, text -> SpeechSegment(i, text, detectLanguage(text)) }
@@ -52,10 +68,30 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     init { engine }
 
-    fun importBook(uri: android.net.Uri) {
-        repository.import(uri).onSuccess { book ->
-            books = repository.allBooks(); openBook(book); importError = null
-        }.onFailure { importError = it.message ?: "导入失败" }
+    fun importBooks(uris: List<android.net.Uri>) {
+        if (uris.isEmpty() || importState.isImporting) return
+        viewModelScope.launch {
+            var duplicateCount = 0
+            var latestBook: Book? = null
+            importError = null
+            uris.forEachIndexed { index, uri ->
+                importState = ImportUiState(index, uris.size, uri.lastPathSegment.orEmpty(), duplicateCount)
+                val before = repository.allBooks().size
+                withContext(Dispatchers.IO) { repository.import(uri) }
+                    .onSuccess { book ->
+                        latestBook = book
+                        if (repository.allBooks().size == before) duplicateCount++
+                    }
+                    .onFailure { importError = it.message ?: "导入失败" }
+                importState = ImportUiState(index + 1, uris.size, uri.lastPathSegment.orEmpty(), duplicateCount)
+            }
+            books = repository.allBooks()
+            importState = ImportUiState()
+            if (importError == null) {
+                importError = if (duplicateCount > 0) "导入完成，已跳过 $duplicateCount 本重复书籍" else "已导入 ${uris.size} 本书"
+            }
+            latestBook?.let(::openBook)
+        }
     }
 
     fun openBook(book: Book) {

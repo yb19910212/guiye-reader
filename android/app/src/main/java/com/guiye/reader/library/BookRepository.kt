@@ -8,6 +8,7 @@ import java.io.File
 import java.security.MessageDigest
 
 class BookRepository(private val context: Context) {
+    private val maximumImportBytes = 2L * 1024 * 1024 * 1024
     private val prefs = context.getSharedPreferences("guiye_library", Context.MODE_PRIVATE)
     private val booksDirectory = File(context.filesDir, "books").apply { mkdirs() }
 
@@ -20,6 +21,7 @@ class BookRepository(private val context: Context) {
 
     fun import(uri: Uri): Result<Book> = runCatching {
         val metadata = queryMetadata(uri)
+        require(metadata.second <= 0 || metadata.second <= maximumImportBytes) { "单个文件暂不能超过 2 GB" }
         val format = formatOf(metadata.first)
         val extension = format.name.lowercase()
         val temp = File.createTempFile("import-", ".$extension", booksDirectory)
@@ -27,6 +29,7 @@ class BookRepository(private val context: Context) {
             requireNotNull(input) { "无法打开所选文件" }
             temp.outputStream().use { output -> input.copyTo(output) }
         }
+        require(temp.length() <= maximumImportBytes) { temp.delete(); "单个文件暂不能超过 2 GB" }
         val id = sha256(temp)
         val existing = allBooks().firstOrNull { it.id == id }
         if (existing != null) { temp.delete(); return@runCatching existing }
