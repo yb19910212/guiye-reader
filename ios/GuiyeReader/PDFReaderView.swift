@@ -6,6 +6,7 @@ struct PDFReaderView: View {
     let onProgress: (Double) -> Void
     @State private var pageIndex: Int
     @State private var pageCount = 1
+    @State private var displayMode: PDFDisplayMode = .singlePageContinuous
 
     init(book: Book, onProgress: @escaping (Double) -> Void = { _ in }) {
         self.book = book
@@ -15,7 +16,7 @@ struct PDFReaderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PDFKitView(url: book.localURL, pageIndex: $pageIndex, pageCount: $pageCount)
+            PDFKitView(url: book.localURL, pageIndex: $pageIndex, pageCount: $pageCount, displayMode: displayMode)
             HStack {
                 Button("上一页") { pageIndex = max(0, pageIndex - 1) }
                     .disabled(pageIndex == 0)
@@ -29,6 +30,15 @@ struct PDFReaderView: View {
         }
         .navigationTitle(book.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu("显示") {
+                    Button("单页") { displayMode = .singlePage }
+                    Button("连续滚动") { displayMode = .singlePageContinuous }
+                    Button("双页") { displayMode = .twoUpContinuous }
+                }
+            }
+        }
         .onChange(of: pageIndex) { _, value in
             UserDefaults.standard.set(value, forKey: "pdf.\(book.id)")
             onProgress(pageCount <= 1 ? 0 : Double(value) / Double(pageCount - 1))
@@ -40,13 +50,14 @@ private struct PDFKitView: UIViewRepresentable {
     let url: URL
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
+    let displayMode: PDFDisplayMode
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView()
         view.autoScales = true
-        view.displayMode = .singlePageContinuous
+        view.displayMode = displayMode
         view.displayDirection = .vertical
         view.usePageViewController(false)
         view.document = PDFDocument(url: url)
@@ -63,6 +74,7 @@ private struct PDFKitView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: PDFView, context: Context) {
+        view.displayMode = displayMode
         go(to: pageIndex, in: view)
     }
 

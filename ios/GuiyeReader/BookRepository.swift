@@ -48,6 +48,13 @@ final class BookRepository: ObservableObject {
         try? persist()
     }
 
+    func backupData() -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        return (try? encoder.encode(books)) ?? Data("[]".utf8)
+    }
+
     private func importFile(_ source: URL) async throws -> Bool {
         guard let format = BookFormat(rawValue: source.pathExtension.lowercased()) else { throw ImportError.unsupported }
         try manager.createDirectory(at: booksDirectory, withIntermediateDirectories: true)

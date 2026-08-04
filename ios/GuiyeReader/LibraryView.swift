@@ -9,6 +9,7 @@ struct LibraryView: View {
     @State private var filter: LibraryFilter = .all
     @State private var showsNotes = false
     @State private var showsAISettings = false
+    @State private var exportsBackup = false
     private let paper = Color(red: 0.965, green: 0.953, blue: 0.918)
     private let moss = Color(red: 0.192, green: 0.373, blue: 0.286)
     private var epubType: UTType { UTType(filenameExtension: "epub") ?? .data }
@@ -31,6 +32,7 @@ struct LibraryView: View {
                 .navigationTitle("归页")
                 .searchable(text: $searchText, prompt: "搜索书名或作者")
                 .toolbar { ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { exportsBackup = true } label: { Label("备份", systemImage: "externaldrive") }
                     Button { showsAISettings = true } label: { Label("AI", systemImage: "sparkles") }
                     Button { showsNotes = true } label: { Label("笔记", systemImage: "note.text") }
                     Button("导入") { importing = true }
@@ -49,6 +51,9 @@ struct LibraryView: View {
                 }
                 .sheet(isPresented: $showsNotes) { NotesView(books: repository.books) }
                 .sheet(isPresented: $showsAISettings) { AISettingsView() }
+                .fileExporter(isPresented: $exportsBackup, document: LibraryBackupDocument(data: repository.backupData()), contentType: .json, defaultFilename: "GuiyeReader-Backup") { result in
+                    if case .failure(let error) = result { repository.lastError = error.localizedDescription }
+                }
         }.tint(moss)
     }
 

@@ -36,10 +36,20 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: "16.4"
-      - name: Build unsigned simulator app
+      - name: Build unsigned device app
         run: >-
           xcodebuild -project ios/GuiyeReader.xcodeproj
-          -scheme GuiyeReader
-          -sdk iphonesimulator
-          -destination 'generic/platform=iOS Simulator'
+          -scheme GuiyeReader -configuration Release
+          -sdk iphoneos -destination 'generic/platform=iOS'
+          CONFIGURATION_BUILD_DIR="$PWD/ios/build-unsigned"
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p ios/package/Payload
+          cp -R ios/build-unsigned/GuiyeReader.app ios/package/Payload/
+          cd ios/package
+          zip -qry ../GuiyeReader-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GuiyeReader-ios-unsigned
+          path: ios/GuiyeReader-unsigned.ipa

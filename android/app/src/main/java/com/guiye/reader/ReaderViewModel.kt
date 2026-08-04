@@ -128,6 +128,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         books = repository.allBooks()
     }
 
+    fun backupJson(): String = repository.backupJson()
+
     fun playOrPause() {
         when (speechState) {
             SpeechState.IDLE -> { engine.speak(segments, currentParagraph, selectedVoiceId, rate); speechState = SpeechState.PLAYING }

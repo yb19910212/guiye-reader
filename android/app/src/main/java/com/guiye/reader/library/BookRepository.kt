@@ -56,6 +56,12 @@ class BookRepository(private val context: Context) {
         save(allBooks().map { if (it.id == bookId) it.copy(progress = progress.coerceIn(0f, 1f)) else it })
     }
 
+    fun backupJson(): String = JSONObject().apply {
+        put("version", 1)
+        put("exportedAt", System.currentTimeMillis())
+        put("books", JSONArray().apply { allBooks().forEach { put(it.toJson()) } })
+    }.toString(2)
+
     private fun save(books: List<Book>) {
         val array = JSONArray(); books.distinctBy { it.id }.forEach { array.put(it.toJson()) }
         prefs.edit().putString("books", array.toString()).apply()

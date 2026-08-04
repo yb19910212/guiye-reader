@@ -16,6 +16,7 @@ class PdfPageView(context: Context, file: File) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private var bitmap: Bitmap? = null
     private var requestedPage = 0
+    private var fitWidth = false
     val pageCount: Int get() = renderer.pageCount
 
     init { setBackgroundColor(Color.rgb(232, 230, 224)) }
@@ -27,6 +28,12 @@ class PdfPageView(context: Context, file: File) : View(context) {
         if (width > 0 && height > 0) renderPage()
     }
 
+    fun setFitWidth(enabled: Boolean) {
+        if (fitWidth == enabled) return
+        fitWidth = enabled
+        renderPage()
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w > 0 && h > 0) renderPage()
@@ -35,7 +42,7 @@ class PdfPageView(context: Context, file: File) : View(context) {
     private fun renderPage() {
         if (pageCount == 0 || width <= 0 || height <= 0) return
         renderer.openPage(requestedPage).use { page ->
-            val scale = minOf(width.toFloat() / page.width, height.toFloat() / page.height)
+            val scale = if (fitWidth) width.toFloat() / page.width else minOf(width.toFloat() / page.width, height.toFloat() / page.height)
             val targetWidth = (page.width * scale).toInt().coerceAtLeast(1)
             val targetHeight = (page.height * scale).toInt().coerceAtLeast(1)
             bitmap?.recycle()

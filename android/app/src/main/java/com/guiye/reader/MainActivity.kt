@@ -61,6 +61,7 @@ private fun GuiyeApp(vm: ReaderViewModel = viewModel()) {
 private fun PdfReaderScreen(vm: ReaderViewModel, book: Book) {
     var page by remember(book.id) { mutableIntStateOf(vm.pdfPage(book)) }
     var pageCount by remember(book.id) { mutableIntStateOf(1) }
+    var fitWidth by remember(book.id) { mutableStateOf(false) }
     LaunchedEffect(page, pageCount) { vm.savePdfPage(book, page, pageCount) }
     Scaffold(
         topBar = { TopAppBar(title = { Text(book.title) }, navigationIcon = { TextButton(onClick = vm::closeBook) { Text("‹ 书库") } }) },
@@ -70,13 +71,14 @@ private fun PdfReaderScreen(vm: ReaderViewModel, book: Book) {
                     TextButton(onClick = { page = (page - 1).coerceAtLeast(0) }, enabled = page > 0) { Text("上一页") }
                     Text("${page + 1} / $pageCount")
                     TextButton(onClick = { page = (page + 1).coerceAtMost(pageCount - 1) }, enabled = page + 1 < pageCount) { Text("下一页") }
+                    TextButton(onClick = { fitWidth = !fitWidth }) { Text(if (fitWidth) "整页" else "适宽") }
                 }
             }
         }
     ) { padding ->
         AndroidView(
             factory = { context -> PdfPageView(context, java.io.File(book.localPath)).also { pageCount = it.pageCount; page = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0)); it.showPage(page) } },
-            update = { it.showPage(page) },
+            update = { it.setFitWidth(fitWidth); it.showPage(page) },
             modifier = Modifier.padding(padding).fillMaxSize()
         )
     }
@@ -95,6 +97,10 @@ private fun LibraryScreen(vm: ReaderViewModel) {
     }
     Scaffold(
         topBar = { TopAppBar(title = { Text("归页") }, actions = {
+            TextButton(onClick = {
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "application/json"; putExtra(android.content.Intent.EXTRA_TEXT, vm.backupJson()) }
+                context.startActivity(android.content.Intent.createChooser(intent, "导出归页备份"))
+            }) { Text("备份") }
             TextButton(onClick = { showsAISettings = true }) { Text("AI") }
             TextButton(onClick = { showsNotes = true }) { Text("笔记") }
             TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
