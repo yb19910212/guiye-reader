@@ -26,7 +26,7 @@ private final class EPUBReadiumService {
 @MainActor
 private final class EPUBReaderBridge: ObservableObject {
     @Published var navigator: EPUBNavigatorViewController?
-    @Published var tableOfContents: [Link] = []
+    @Published var tableOfContents: [ReadiumShared.Link] = []
     @Published var error: String?
 }
 
@@ -68,7 +68,7 @@ struct EPUBReaderView: View {
             }
     }
 
-    private func flatten(_ links: [Link]) -> [Link] {
+    private func flatten(_ links: [ReadiumShared.Link]) -> [ReadiumShared.Link] {
         links.flatMap { [$0] + flatten($0.children) }
     }
 }
@@ -123,6 +123,10 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
         func navigator(_ navigator: Navigator, locationDidChange locator: Locator) {
             UserDefaults.standard.set(try? locator.jsonString(), forKey: "epub.\(book.id)")
             onProgress(locator.locations.totalProgression ?? 0)
+        }
+
+        func navigator(_ navigator: Navigator, presentError error: NavigatorError) {
+            bridge.error = String(describing: error)
         }
     }
 }
