@@ -88,7 +88,7 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UIViewController, context: Context) {}
 
-    final class Coordinator: NSObject, NavigatorDelegate {
+    final class Coordinator: NSObject, EPUBNavigatorDelegate {
         let book: Book
         let bridge: EPUBReaderBridge
         let onProgress: (Double) -> Void
