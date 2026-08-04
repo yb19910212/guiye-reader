@@ -1,0 +1,54 @@
+import SwiftUI
+
+struct NotesView: View {
+    let books: [Book]
+    @StateObject private var store = NoteStore()
+    @State private var searchText = ""
+    @State private var showsEditor = false
+    @State private var selectedBookID = ""
+    @State private var draft = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(filteredNotes) { note in
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(note.bookTitle).font(.headline)
+                        Text(note.text)
+                        Text(note.createdAt.formatted()).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .onDelete { offsets in store.remove(ids: Set(offsets.map { filteredNotes[$0].id })) }
+            }
+            .overlay { if store.notes.isEmpty { ContentUnavailableView("还没有笔记", systemImage: "note.text", description: Text("笔记永远属于你，并可随时导出。")) } }
+            .searchable(text: $searchText, prompt: "搜索全部笔记")
+            .navigationTitle("阅读笔记")
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    ShareLink(item: store.markdown, subject: Text("归页阅读笔记")) { Image(systemName: "square.and.arrow.up") }
+                    Button { selectedBookID = selectedBookID.isEmpty ? (books.first?.id ?? "") : selectedBookID; showsEditor = true } label: { Image(systemName: "plus") }
+                }
+            }
+            .sheet(isPresented: $showsEditor) {
+                NavigationStack {
+                    Form {
+                        Picker("书籍", selection: $selectedBookID) { ForEach(books) { Text($0.title).tag($0.id) } }
+                        TextEditor(text: $draft).frame(minHeight: 180)
+                    }
+                    .navigationTitle("新建笔记")
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { Button("取消") { showsEditor = false } }
+                        ToolbarItem(placement: .confirmationAction) { Button("保存") {
+                            if let book = books.first(where: { $0.id == selectedBookID }) { store.add(book: book, text: draft) }
+                            draft = ""; showsEditor = false
+                        } }
+                    }
+                }
+            }
+        }
+    }
+
+    private var filteredNotes: [ReadingNote] {
+        searchText.isEmpty ? store.notes : store.notes.filter { $0.text.localizedCaseInsensitiveContains(searchText) || $0.bookTitle.localizedCaseInsensitiveContains(searchText) }
+    }
+}

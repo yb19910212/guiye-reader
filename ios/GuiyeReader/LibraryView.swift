@@ -7,6 +7,8 @@ struct LibraryView: View {
     @State private var selectedBook: Book?
     @State private var searchText = ""
     @State private var filter: LibraryFilter = .all
+    @State private var showsNotes = false
+    @State private var showsAISettings = false
     private let paper = Color(red: 0.965, green: 0.953, blue: 0.918)
     private let moss = Color(red: 0.192, green: 0.373, blue: 0.286)
     private var epubType: UTType { UTType(filenameExtension: "epub") ?? .data }
@@ -28,7 +30,11 @@ struct LibraryView: View {
                 }
                 .navigationTitle("归页")
                 .searchable(text: $searchText, prompt: "搜索书名或作者")
-                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("导入") { importing = true } } }
+                .toolbar { ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { showsAISettings = true } label: { Label("AI", systemImage: "sparkles") }
+                    Button { showsNotes = true } label: { Label("笔记", systemImage: "note.text") }
+                    Button("导入") { importing = true }
+                } }
                 .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .pdf, epubType], allowsMultipleSelection: true) { result in
                     switch result { case .success(let urls): repository.importFiles(urls); case .failure(let error): repository.lastError = error.localizedDescription }
                 }
@@ -41,6 +47,8 @@ struct LibraryView: View {
                         ReaderView(book: book, paragraphs: repository.paragraphs(for: book)) { repository.updateProgress(bookID: book.id, progress: $0) }
                     }
                 }
+                .sheet(isPresented: $showsNotes) { NotesView(books: repository.books) }
+                .sheet(isPresented: $showsAISettings) { AISettingsView() }
         }.tint(moss)
     }
 

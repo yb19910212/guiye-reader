@@ -27,6 +27,7 @@ import com.guiye.reader.epub.EpubReaderScreen
 import com.guiye.reader.library.Book
 import com.guiye.reader.library.BookFormat
 import com.guiye.reader.pdf.PdfPageView
+import com.guiye.reader.notes.NoteRepository
 import com.guiye.reader.speech.SpeechState
 
 private val Paper = Color(0xFFF6F3EA)
@@ -83,13 +84,21 @@ private fun PdfReaderScreen(vm: ReaderViewModel, book: Book) {
 
 @Composable
 private fun LibraryScreen(vm: ReaderViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val notes = remember { NoteRepository(context) }
+    var showsNotes by remember { mutableStateOf(false) }
+    var showsAISettings by remember { mutableStateOf(false) }
     var searchText by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("all") }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.importBooks(uris)
     }
     Scaffold(
-        topBar = { TopAppBar(title = { Text("归页") }, actions = { TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") } }) },
+        topBar = { TopAppBar(title = { Text("归页") }, actions = {
+            TextButton(onClick = { showsAISettings = true }) { Text("AI") }
+            TextButton(onClick = { showsNotes = true }) { Text("笔记") }
+            TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
+        }) },
         floatingActionButton = { FloatingActionButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("＋") } }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().background(Paper).padding(horizontal = 20.dp)) {
@@ -124,6 +133,39 @@ private fun LibraryScreen(vm: ReaderViewModel) {
                 }
             }
         }
+    }
+    if (showsNotes) {
+        AlertDialog(
+            onDismissRequest = { showsNotes = false },
+            title = { Text("阅读笔记") },
+            text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                if (notes.all().isEmpty()) Text("还没有笔记")
+                notes.all().forEach { note -> Text(note.bookTitle, style = MaterialTheme.typography.titleSmall); Text(note.text); HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+            } },
+            confirmButton = { TextButton(onClick = {
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "text/markdown"; putExtra(android.content.Intent.EXTRA_TEXT, notes.markdown()) }
+                context.startActivity(android.content.Intent.createChooser(intent, "导出阅读笔记"))
+            }) { Text("导出 Markdown") } },
+            dismissButton = { TextButton(onClick = { showsNotes = false }) { Text("关闭") } }
+        )
+    }
+    if (showsAISettings) {
+        val aiPrefs = remember { context.getSharedPreferences("guiye_ai", android.content.Context.MODE_PRIVATE) }
+        var enabled by remember { mutableStateOf(aiPrefs.getBoolean("enabled", false)) }
+        var currentOnly by remember { mutableStateOf(aiPrefs.getBoolean("currentOnly", true)) }
+        var noSpoilers by remember { mutableStateOf(aiPrefs.getBoolean("noSpoilers", true)) }
+        var model by remember { mutableStateOf(aiPrefs.getString("model", "gpt-5.6-sol") ?: "gpt-5.6-sol") }
+        AlertDialog(onDismissRequest = { showsAISettings = false }, title = { Text("AI 阅读助手") }, text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) { Text("启用 AI", Modifier.weight(1f)); Switch(enabled, { enabled = it }) }
+                OutlinedTextField(model, { model = it }, label = { Text("模型") })
+                Row(verticalAlignment = Alignment.CenterVertically) { Text("仅允许当前书籍", Modifier.weight(1f)); Switch(currentOnly, { currentOnly = it }) }
+                Row(verticalAlignment = Alignment.CenterVertically) { Text("小说禁止剧透", Modifier.weight(1f)); Switch(noSpoilers, { noSpoilers = it }) }
+                Text("默认关闭。应用不会内置云服务密钥；关闭后不影响本地阅读与笔记。", style = MaterialTheme.typography.bodySmall)
+            }
+        }, confirmButton = { Button(onClick = {
+            aiPrefs.edit().putBoolean("enabled", enabled).putBoolean("currentOnly", currentOnly).putBoolean("noSpoilers", noSpoilers).putString("model", model).apply(); showsAISettings = false
+        }) { Text("保存") } }, dismissButton = { TextButton(onClick = { showsAISettings = false }) { Text("取消") } })
     }
 }
 

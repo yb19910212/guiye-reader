@@ -13,6 +13,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Slider
@@ -50,6 +51,7 @@ import org.readium.r2.shared.util.toUrl
 import org.readium.r2.streamer.PublicationOpener
 import org.readium.r2.streamer.parser.DefaultPublicationParser
 import com.guiye.reader.library.Book
+import com.guiye.reader.notes.NoteRepository
 
 private class ReadiumServices(activity: FragmentActivity) {
     private val httpClient = DefaultHttpClient()
@@ -71,6 +73,7 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
     val activity = LocalContext.current as FragmentActivity
     val services = remember { ReadiumServices(activity) }
     val prefs = remember { activity.getSharedPreferences("guiye_positions", 0) }
+    val notes = remember { NoteRepository(activity) }
     var publication by remember(book.id) { mutableStateOf<Publication?>(null) }
     var navigator by remember(book.id) { mutableStateOf<EpubNavigatorFragment?>(null) }
     var error by remember(book.id) { mutableStateOf<String?>(null) }
@@ -81,6 +84,9 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
     var pageMargins by remember { mutableStateOf(prefs.getFloat("reader.pageMargins", 1f)) }
     var scroll by remember { mutableStateOf(prefs.getBoolean("reader.scroll", false)) }
     var theme by remember { mutableStateOf(prefs.getString("reader.theme", "light") ?: "light") }
+    var currentLocator by remember { mutableStateOf<String?>(null) }
+    var showsNoteEditor by remember { mutableStateOf(false) }
+    var noteDraft by remember { mutableStateOf("") }
 
     LaunchedEffect(book.id) {
         val asset = services.assetRetriever.retrieve(File(book.localPath).toUrl(false)).getOrNull()
@@ -92,6 +98,7 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
     LaunchedEffect(navigator) {
         navigator?.currentLocator?.collectLatest { locator ->
             prefs.edit().putString("epub.${book.id}", locator.toJSON().toString()).apply()
+            currentLocator = locator.toJSON().toString()
             onProgress(book, (locator.locations.totalProgression ?: 0.0).toFloat())
         }
     }
@@ -102,6 +109,7 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
                 title = { Text(book.title) },
                 navigationIcon = { TextButton(onClick = onClose) { Text("‹ 书库") } },
                 actions = {
+                    TextButton(onClick = { showsNoteEditor = true }) { Text("笔记") }
                     TextButton(onClick = { showsAppearance = true }) { Text("Aa") }
                     Box {
                         Button(onClick = { showsContents = true }, enabled = publication?.tableOfContents?.isNotEmpty() == true) { Text("目录") }
@@ -151,6 +159,14 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
                     .putFloat("reader.pageMargins", pageMargins).putBoolean("reader.scroll", scroll).putString("reader.theme", theme).apply()
                 showsAppearance = false
             }) { Text("完成") } }
+        )
+    }
+    if (showsNoteEditor) {
+        AlertDialog(
+            onDismissRequest = { showsNoteEditor = false }, title = { Text("添加读书笔记") },
+            text = { OutlinedTextField(noteDraft, { noteDraft = it }, label = { Text("记录想法") }, minLines = 5) },
+            confirmButton = { Button(onClick = { notes.add(book, noteDraft, currentLocator); noteDraft = ""; showsNoteEditor = false }) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { showsNoteEditor = false }) { Text("取消") } }
         )
     }
 }
