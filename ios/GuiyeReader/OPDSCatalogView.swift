@@ -31,41 +31,54 @@ struct OPDSCatalogView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    TextField("OPDS 目录地址", text: $address).textInputAutocapitalization(.never).keyboardType(.URL)
-                    Button("打开目录") { model.load(address.trimmingCharacters(in: .whitespacesAndNewlines)) }.disabled(model.isLoading)
-                    if model.isLoading { ProgressView() }
-                    if let message = model.message { Text(message).foregroundStyle(.secondary) }
-                }
-                if let feed = model.feed {
-                    if !navigation(feed).isEmpty {
-                        Section("浏览") {
-                            ForEach(Array(navigation(feed).enumerated()), id: \.offset) { _, link in
-                                Button { address = link.href; model.load(link.href) } label: { Label(link.title ?? link.href, systemImage: "chevron.right") }
-                            }
-                        }
-                    }
-                    Section(feed.metadata.title) {
-                        ForEach(Array(publications(feed).enumerated()), id: \.offset) { _, publication in
-                            let title = publication.metadata.title ?? "未命名出版物"
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(title).font(.headline)
-                                let author = publication.metadata.authors.map(\.name).joined(separator: ", ")
-                                if !author.isEmpty { Text(author).font(.subheadline).foregroundStyle(.secondary) }
-                                if let link = publication.downloadLinks.first {
-                                    Button("下载并导入") { download(title, link: link) }
-                                } else {
-                                    Text("没有可直接下载的无 DRM 文件").font(.caption).foregroundStyle(.secondary)
-                                }
-                            }.padding(.vertical, 4)
-                        }
-                    }
-                }
-            }
+            catalogList
             .navigationTitle("OPDS 书库")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         }
+    }
+
+    private var catalogList: some View {
+        List {
+            addressSection
+            if let feed = model.feed { feedSections(feed) }
+        }
+    }
+
+    private var addressSection: some View {
+        Section {
+            TextField("OPDS 目录地址", text: $address).textInputAutocapitalization(.never).keyboardType(.URL)
+            Button("打开目录") { model.load(address.trimmingCharacters(in: .whitespacesAndNewlines)) }.disabled(model.isLoading)
+            if model.isLoading { ProgressView() }
+            if let message = model.message { Text(message).foregroundStyle(.secondary) }
+        }
+    }
+
+    @ViewBuilder private func feedSections(_ feed: Feed) -> some View {
+        let links = navigation(feed)
+        if !links.isEmpty {
+            Section("浏览") {
+                ForEach(Array(links.enumerated()), id: \.offset) { _, link in
+                    Button { address = link.href; model.load(link.href) } label: { Label(link.title ?? link.href, systemImage: "chevron.right") }
+                }
+            }
+        }
+        Section(feed.metadata.title) {
+            ForEach(Array(publications(feed).enumerated()), id: \.offset) { _, publication in publicationRow(publication) }
+        }
+    }
+
+    private func publicationRow(_ publication: Publication) -> some View {
+        let title = publication.metadata.title ?? "未命名出版物"
+        let author = publication.metadata.authors.map(\.name).joined(separator: ", ")
+        return VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.headline)
+            if !author.isEmpty { Text(author).font(.subheadline).foregroundStyle(.secondary) }
+            if let link = publication.downloadLinks.first {
+                Button("下载并导入") { download(title, link: link) }
+            } else {
+                Text("没有可直接下载的无 DRM 文件").font(.caption).foregroundStyle(.secondary)
+            }
+        }.padding(.vertical, 4)
     }
 
     private func navigation(_ feed: Feed) -> [ReadiumShared.Link] { feed.navigation + feed.groups.flatMap(\.navigation) }
