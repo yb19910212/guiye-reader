@@ -15,6 +15,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -37,6 +39,8 @@ import kotlinx.coroutines.flow.collectLatest
 import org.json.JSONObject
 import org.readium.r2.navigator.epub.EpubNavigatorFactory
 import org.readium.r2.navigator.epub.EpubNavigatorFragment
+import org.readium.r2.navigator.epub.EpubPreferences
+import org.readium.r2.navigator.preferences.Theme
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Locator
 import org.readium.r2.shared.publication.Publication
@@ -71,6 +75,12 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
     var navigator by remember(book.id) { mutableStateOf<EpubNavigatorFragment?>(null) }
     var error by remember(book.id) { mutableStateOf<String?>(null) }
     var showsContents by remember { mutableStateOf(false) }
+    var showsAppearance by remember { mutableStateOf(false) }
+    var fontSize by remember { mutableStateOf(prefs.getFloat("reader.fontSize", 1f)) }
+    var lineHeight by remember { mutableStateOf(prefs.getFloat("reader.lineHeight", 1.5f)) }
+    var pageMargins by remember { mutableStateOf(prefs.getFloat("reader.pageMargins", 1f)) }
+    var scroll by remember { mutableStateOf(prefs.getBoolean("reader.scroll", false)) }
+    var theme by remember { mutableStateOf(prefs.getString("reader.theme", "light") ?: "light") }
 
     LaunchedEffect(book.id) {
         val asset = services.assetRetriever.retrieve(File(book.localPath).toUrl(false)).getOrNull()
@@ -92,6 +102,7 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
                 title = { Text(book.title) },
                 navigationIcon = { TextButton(onClick = onClose) { Text("‹ 书库") } },
                 actions = {
+                    TextButton(onClick = { showsAppearance = true }) { Text("Aa") }
                     Box {
                         Button(onClick = { showsContents = true }, enabled = publication?.tableOfContents?.isNotEmpty() == true) { Text("目录") }
                         DropdownMenu(expanded = showsContents, onDismissRequest = { showsContents = false }) {
@@ -109,14 +120,43 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) {
             publication?.let { opened ->
-                EpubNavigatorHost(book, opened) { navigator = it }
+                EpubNavigatorHost(book, opened, EpubPreferences(
+                    fontSize = fontSize.toDouble(), lineHeight = lineHeight.toDouble(), pageMargins = pageMargins.toDouble(),
+                    publisherStyles = false, scroll = scroll,
+                    theme = when (theme) { "dark" -> Theme.DARK; "sepia" -> Theme.SEPIA; else -> Theme.LIGHT }
+                )) { navigator = it }
             } ?: if (error == null) CircularProgressIndicator() else Text(error.orEmpty())
         }
+    }
+
+    if (showsAppearance) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showsAppearance = false },
+            title = { Text("阅读设置") },
+            text = {
+                androidx.compose.foundation.layout.Column {
+                    Text("字号 ${"%.1f".format(fontSize)}×"); Slider(fontSize, { fontSize = it }, valueRange = .7f..2f)
+                    Text("行距 ${"%.1f".format(lineHeight)}"); Slider(lineHeight, { lineHeight = it }, valueRange = 1f..2.2f)
+                    Text("页边距 ${"%.1f".format(pageMargins)}"); Slider(pageMargins, { pageMargins = it }, valueRange = .5f..2f)
+                    androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) { Text("上下滚动", modifier = Modifier.weight(1f)); Switch(scroll, { scroll = it }) }
+                    androidx.compose.foundation.layout.Row {
+                        listOf("light" to "日间", "sepia" to "纸张", "dark" to "夜间").forEach { (value, label) ->
+                            TextButton(onClick = { theme = value }) { Text(if (theme == value) "● $label" else label) }
+                        }
+                    }
+                }
+            },
+            confirmButton = { Button(onClick = {
+                prefs.edit().putFloat("reader.fontSize", fontSize).putFloat("reader.lineHeight", lineHeight)
+                    .putFloat("reader.pageMargins", pageMargins).putBoolean("reader.scroll", scroll).putString("reader.theme", theme).apply()
+                showsAppearance = false
+            }) { Text("完成") } }
+        )
     }
 }
 
 @Composable
-private fun EpubNavigatorHost(book: Book, publication: Publication, onReady: (EpubNavigatorFragment) -> Unit) {
+private fun EpubNavigatorHost(book: Book, publication: Publication, preferences: EpubPreferences, onReady: (EpubNavigatorFragment) -> Unit) {
     val activity = LocalContext.current as FragmentActivity
     val prefs = remember { activity.getSharedPreferences("guiye_positions", 0) }
     var containerId by remember { mutableIntStateOf(View.NO_ID) }
@@ -133,12 +173,14 @@ private fun EpubNavigatorHost(book: Book, publication: Publication, onReady: (Ep
         val saved = prefs.getString("epub.${book.id}", null)
         val locator = saved?.let { runCatching { Locator.fromJSON(JSONObject(it)) }.getOrNull() }
         activity.supportFragmentManager.fragmentFactory = EpubNavigatorFactory(publication)
-            .createFragmentFactory(initialLocator = locator)
+            .createFragmentFactory(initialLocator = locator, initialPreferences = preferences)
         activity.supportFragmentManager.commitNow {
             replace(containerId, EpubNavigatorFragment::class.java, Bundle(), tag)
         }
         (activity.supportFragmentManager.findFragmentByTag(tag) as? EpubNavigatorFragment)?.let(onReady)
     }
+
+    LaunchedEffect(preferences) { (activity.supportFragmentManager.findFragmentByTag(tag) as? EpubNavigatorFragment)?.submitPreferences(preferences) }
 
     DisposableEffect(tag) {
         onDispose {

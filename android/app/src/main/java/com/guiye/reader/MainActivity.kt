@@ -83,6 +83,8 @@ private fun PdfReaderScreen(vm: ReaderViewModel, book: Book) {
 
 @Composable
 private fun LibraryScreen(vm: ReaderViewModel) {
+    var searchText by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf("all") }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.importBooks(uris)
     }
@@ -93,6 +95,12 @@ private fun LibraryScreen(vm: ReaderViewModel) {
         Column(Modifier.padding(padding).fillMaxSize().background(Paper).padding(horizontal = 20.dp)) {
             Text("我的书库", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 18.dp))
             Text("书籍保存在本机 · EPUB / PDF / TXT", color = Moss, modifier = Modifier.padding(top = 5.dp, bottom = 20.dp))
+            OutlinedTextField(value = searchText, onValueChange = { searchText = it }, label = { Text("搜索书名或作者") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf("all" to "全部", "reading" to "在读", "unread" to "未读", "finished" to "读完").forEach { (value, label) ->
+                    FilterChip(selected = filter == value, onClick = { filter = value }, label = { Text(label) })
+                }
+            }
             vm.importError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 12.dp)) }
             if (vm.importState.isImporting) {
                 LinearProgressIndicator(progress = { vm.importState.progress }, modifier = Modifier.fillMaxWidth())
@@ -107,7 +115,11 @@ private fun LibraryScreen(vm: ReaderViewModel) {
                 }
             } else {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    vm.books.forEach { BookRow(it, vm::openBook) }
+                    vm.books.filter { book ->
+                        val queryMatches = searchText.isBlank() || book.title.contains(searchText, true) || book.author?.contains(searchText, true) == true
+                        val stateMatches = when (filter) { "reading" -> book.progress > 0f && book.progress < .98f; "unread" -> book.progress == 0f; "finished" -> book.progress >= .98f; else -> true }
+                        queryMatches && stateMatches
+                    }.forEach { BookRow(it, vm::openBook) }
                     Spacer(Modifier.height(90.dp))
                 }
             }

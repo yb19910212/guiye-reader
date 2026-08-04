@@ -35,6 +35,13 @@ struct EPUBReaderView: View {
     let onProgress: (Double) -> Void
     @StateObject private var bridge = EPUBReaderBridge()
     @State private var showsContents = false
+    @State private var showsAppearance = false
+    @AppStorage("reader.fontSize") private var fontSize = 1.0
+    @AppStorage("reader.lineHeight") private var lineHeight = 1.5
+    @AppStorage("reader.pageMargins") private var pageMargins = 1.0
+    @AppStorage("reader.paragraphSpacing") private var paragraphSpacing = 0.5
+    @AppStorage("reader.scroll") private var scroll = false
+    @AppStorage("reader.theme") private var theme = "light"
 
     init(book: Book, onProgress: @escaping (Double) -> Void = { _ in }) {
         self.book = book
@@ -42,13 +49,16 @@ struct EPUBReaderView: View {
     }
 
     var body: some View {
-        EPUBNavigatorContainer(book: book, bridge: bridge, onProgress: onProgress)
+        EPUBNavigatorContainer(book: book, bridge: bridge, preferences: preferences, onProgress: onProgress)
             .navigationTitle(book.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showsContents = true } label: { Label("目录", systemImage: "list.bullet") }
-                        .disabled(bridge.tableOfContents.isEmpty)
+                    HStack {
+                        Button { showsAppearance = true } label: { Text("Aa") }
+                        Button { showsContents = true } label: { Label("目录", systemImage: "list.bullet") }
+                            .disabled(bridge.tableOfContents.isEmpty)
+                    }
                 }
             }
             .sheet(isPresented: $showsContents) {
@@ -62,6 +72,29 @@ struct EPUBReaderView: View {
                     .navigationTitle("目录")
                 }
             }
+            .sheet(isPresented: $showsAppearance) {
+                NavigationStack {
+                    Form {
+                        Section("文字") {
+                            LabeledContent("字号") { Slider(value: $fontSize, in: 0.7...2.0, step: 0.05).frame(width: 190) }
+                            LabeledContent("行距") { Slider(value: $lineHeight, in: 1.0...2.2, step: 0.1).frame(width: 190) }
+                            LabeledContent("页边距") { Slider(value: $pageMargins, in: 0.5...2.0, step: 0.1).frame(width: 190) }
+                            LabeledContent("段落间距") { Slider(value: $paragraphSpacing, in: 0...1.5, step: 0.1).frame(width: 190) }
+                        }
+                        Section("阅读方式") {
+                            Toggle("上下滚动", isOn: $scroll)
+                            Picker("主题", selection: $theme) {
+                                Text("日间").tag("light")
+                                Text("纸张").tag("sepia")
+                                Text("夜间").tag("dark")
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                    }
+                    .navigationTitle("阅读设置")
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showsAppearance = false } } }
+                }
+            }
             .overlay {
                 if bridge.navigator == nil && bridge.error == nil { ProgressView("正在打开 EPUB…") }
                 if let error = bridge.error { ContentUnavailableView("无法打开 EPUB", systemImage: "exclamationmark.triangle", description: Text(error)) }
@@ -71,27 +104,45 @@ struct EPUBReaderView: View {
     private func flatten(_ links: [ReadiumShared.Link]) -> [ReadiumShared.Link] {
         links.flatMap { [$0] + flatten($0.children) }
     }
+
+    private var preferences: EPUBPreferences {
+        EPUBPreferences(
+            fontSize: fontSize,
+            lineHeight: lineHeight,
+            pageMargins: pageMargins,
+            paragraphSpacing: paragraphSpacing,
+            publisherStyles: false,
+            scroll: scroll,
+            theme: theme == "dark" ? .dark : (theme == "sepia" ? .sepia : .light)
+        )
+    }
 }
 
 private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
     let book: Book
     @ObservedObject var bridge: EPUBReaderBridge
+    let preferences: EPUBPreferences
     let onProgress: (Double) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(book: book, bridge: bridge, onProgress: onProgress) }
 
     func makeUIViewController(context: Context) -> UIViewController {
         let host = UIViewController()
+        context.coordinator.preferences = preferences
         context.coordinator.open(in: host)
         return host
     }
 
-    func updateUIViewController(_ controller: UIViewController, context: Context) {}
+    func updateUIViewController(_ controller: UIViewController, context: Context) {
+        context.coordinator.preferences = preferences
+        bridge.navigator?.submitPreferences(preferences)
+    }
 
     final class Coordinator: NSObject, EPUBNavigatorDelegate {
         let book: Book
         let bridge: EPUBReaderBridge
         let onProgress: (Double) -> Void
+        var preferences: EPUBPreferences = .empty
 
         init(book: Book, bridge: EPUBReaderBridge, onProgress: @escaping (Double) -> Void) {
             self.book = book
@@ -105,7 +156,11 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
                     let publication = try await EPUBReadiumService.shared.open(book.localURL)
                     let saved = UserDefaults.standard.string(forKey: "epub.\(book.id)")
                     let locator = try saved.flatMap { try Locator(json: JSONValue(jsonString: $0), warnings: nil) }
-                    let navigator = try EPUBNavigatorViewController(publication: publication, initialLocation: locator)
+                    let navigator = try EPUBNavigatorViewController(
+                        publication: publication,
+                        initialLocation: locator,
+                        config: .init(preferences: preferences)
+                    )
                     navigator.delegate = self
                     host.addChild(navigator)
                     navigator.view.frame = host.view.bounds
