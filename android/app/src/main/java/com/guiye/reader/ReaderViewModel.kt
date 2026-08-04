@@ -19,6 +19,9 @@ import com.guiye.reader.speech.detectLanguage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.guiye.reader.opds.OpdsCatalog
+import com.guiye.reader.opds.OpdsEntry
+import com.guiye.reader.opds.OpdsPage
 
 data class ImportUiState(
     val current: Int = 0,
@@ -39,6 +42,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         "高亮和批注不应该困在应用里。它们需要保留来源、可以搜索，也可以导出到用户选择的知识工具中。"
     )
     private val repository = BookRepository(application)
+    private val opdsCatalog = OpdsCatalog(application)
     private val positionPrefs = application.getSharedPreferences("guiye_positions", android.content.Context.MODE_PRIVATE)
     var books by mutableStateOf(repository.allBooks())
     var currentBook by mutableStateOf<Book?>(null)
@@ -129,6 +133,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun backupJson(): String = repository.backupJson()
+
+    suspend fun loadOpds(url: String): Result<OpdsPage> = opdsCatalog.load(url)
+
+    fun importOpds(entry: OpdsEntry, completed: (Result<Book>) -> Unit) {
+        viewModelScope.launch {
+            val result = opdsCatalog.download(entry).fold(
+                onSuccess = { file -> withContext(Dispatchers.IO) { repository.import(file) }.also { file.delete() } },
+                onFailure = { Result.failure(it) }
+            )
+            result.onSuccess { books = repository.allBooks() }
+            completed(result)
+        }
+    }
 
     fun playOrPause() {
         when (speechState) {

@@ -41,5 +41,6 @@ dependencies {
     implementation("org.readium.kotlin-toolkit:readium-shared:3.3.0")
     implementation("org.readium.kotlin-toolkit:readium-streamer:3.3.0")
     implementation("org.readium.kotlin-toolkit:readium-navigator:3.3.0")
+    implementation("org.readium.kotlin-toolkit:readium-opds:3.3.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

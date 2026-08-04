@@ -29,6 +29,7 @@ import com.guiye.reader.library.BookFormat
 import com.guiye.reader.pdf.PdfPageView
 import com.guiye.reader.notes.NoteRepository
 import com.guiye.reader.speech.SpeechState
+import com.guiye.reader.opds.OpdsPage
 
 private val Paper = Color(0xFFF6F3EA)
 private val Ink = Color(0xFF1E2B24)
@@ -90,6 +91,7 @@ private fun LibraryScreen(vm: ReaderViewModel) {
     val notes = remember { NoteRepository(context) }
     var showsNotes by remember { mutableStateOf(false) }
     var showsAISettings by remember { mutableStateOf(false) }
+    var showsOpds by remember { mutableStateOf(false) }
     var searchText by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("all") }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -102,6 +104,7 @@ private fun LibraryScreen(vm: ReaderViewModel) {
                 context.startActivity(android.content.Intent.createChooser(intent, "导出归页备份"))
             }) { Text("备份") }
             TextButton(onClick = { showsAISettings = true }) { Text("AI") }
+            TextButton(onClick = { showsOpds = true }) { Text("OPDS") }
             TextButton(onClick = { showsNotes = true }) { Text("笔记") }
             TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
         }) },
@@ -173,6 +176,48 @@ private fun LibraryScreen(vm: ReaderViewModel) {
             aiPrefs.edit().putBoolean("enabled", enabled).putBoolean("currentOnly", currentOnly).putBoolean("noSpoilers", noSpoilers).putString("model", model).apply(); showsAISettings = false
         }) { Text("保存") } }, dismissButton = { TextButton(onClick = { showsAISettings = false }) { Text("取消") } })
     }
+    if (showsOpds) {
+        OpdsDialog(vm) { showsOpds = false }
+    }
+}
+
+@Composable
+private fun OpdsDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val prefs = remember { context.getSharedPreferences("guiye_opds", android.content.Context.MODE_PRIVATE) }
+    var address by remember { mutableStateOf(prefs.getString("last_url", "https://standardebooks.org/opds/all") ?: "") }
+    var currentUrl by remember { mutableStateOf<String?>(null) }
+    var page by remember { mutableStateOf<OpdsPage?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentUrl) {
+        val url = currentUrl ?: return@LaunchedEffect
+        loading = true; message = null
+        vm.loadOpds(url).onSuccess { page = it }.onFailure { message = it.message }
+        loading = false
+    }
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text(page?.title ?: "OPDS 书库") },
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
+                OutlinedTextField(address, { address = it }, label = { Text("OPDS 目录地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Button(onClick = { prefs.edit().putString("last_url", address.trim()).apply(); currentUrl = address.trim() }, enabled = !loading && address.isNotBlank(), modifier = Modifier.padding(vertical = 8.dp)) { Text("打开目录") }
+                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+                message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    page?.navigation?.forEach { item -> TextButton(onClick = { address = item.url; currentUrl = item.url }, modifier = Modifier.fillMaxWidth()) { Text("› ${item.title}", Modifier.fillMaxWidth()) } }
+                    page?.entries?.forEach { entry ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) { Text(entry.title); entry.author?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray) } }
+                            Button(onClick = { message = "正在下载《${entry.title}》"; vm.importOpds(entry) { result -> message = result.fold({ "已导入《${it.title}》" }, { it.message ?: "导入失败" }) } }, enabled = entry.downloadUrl != null) { Text(if (entry.downloadUrl == null) "不可下载" else "导入") }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
+    )
 }
 
 @Composable

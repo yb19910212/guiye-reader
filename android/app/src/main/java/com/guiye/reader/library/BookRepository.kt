@@ -44,6 +44,18 @@ class BookRepository(private val context: Context) {
         book
     }
 
+    fun import(file: File): Result<Book> = runCatching {
+        val format = formatOf(file.name)
+        require(file.length() <= maximumImportBytes) { "单个文件暂不能超过 2 GB" }
+        val id = sha256(file)
+        allBooks().firstOrNull { it.id == id }?.let { return@runCatching it }
+        val destination = File(booksDirectory, "$id.${format.name.lowercase()}")
+        file.copyTo(destination, overwrite = false)
+        val book = Book(id, file.nameWithoutExtension, null, format, destination.absolutePath, destination.length(), System.currentTimeMillis())
+        save(allBooks() + book)
+        book
+    }
+
     fun readText(book: Book): Result<String> = runCatching {
         require(book.format == BookFormat.TXT) { "当前格式应交给 Readium/PDF 阅读器" }
         val bytes = File(book.localPath).readBytes()
