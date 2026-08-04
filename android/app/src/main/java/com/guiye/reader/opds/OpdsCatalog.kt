@@ -62,6 +62,6 @@ class OpdsCatalog(private val context: Context) {
                     candidate.href.toString().substringAfterLast('.', "").lowercase() in setOf("epub", "pdf", "txt"))
         }
         val author = publication.metadata.authors.joinToString(", ") { it.name }.takeIf { it.isNotBlank() }
-        return OpdsEntry(publication.metadata.title, author, link?.href?.toString(), link?.mediaType?.toString())
+        return OpdsEntry(publication.metadata.title ?: "未命名出版物", author, link?.href?.toString(), link?.mediaType?.toString())
     }
 }
