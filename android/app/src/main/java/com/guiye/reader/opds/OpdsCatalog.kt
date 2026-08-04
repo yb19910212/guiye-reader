@@ -61,6 +61,7 @@ class OpdsCatalog(private val context: Context) {
                 (candidate.mediaType?.toString()?.let { it.contains("epub", true) || it.contains("pdf", true) || it.contains("text/plain", true) } == true ||
                     candidate.href.toString().substringAfterLast('.', "").lowercase() in setOf("epub", "pdf", "txt"))
         }
-        return OpdsEntry(publication.metadata.title, publication.metadata.authors.joinToString(", ") { it.name }.ifBlank { null }, link?.href?.toString(), link?.mediaType?.toString())
+        val author = publication.metadata.authors.joinToString(", ") { it.name }.takeIf { it.isNotBlank() }
+        return OpdsEntry(publication.metadata.title, author, link?.href?.toString(), link?.mediaType?.toString())
     }
 }
