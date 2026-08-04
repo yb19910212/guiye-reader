@@ -3,7 +3,6 @@
 package com.guiye.reader
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,6 +22,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.fragment.app.FragmentActivity
+import com.guiye.reader.epub.EpubReaderScreen
 import com.guiye.reader.library.Book
 import com.guiye.reader.library.BookFormat
 import com.guiye.reader.pdf.PdfPageView
@@ -33,7 +34,7 @@ private val Ink = Color(0xFF1E2B24)
 private val Moss = Color(0xFF315F49)
 private val Highlight = Color(0xFFE3ECDD)
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -50,6 +51,7 @@ private fun GuiyeApp(vm: ReaderViewModel = viewModel()) {
     when (vm.currentBook?.format) {
         null -> LibraryScreen(vm)
         BookFormat.PDF -> PdfReaderScreen(vm, vm.currentBook!!)
+        BookFormat.EPUB -> EpubReaderScreen(vm.currentBook!!, vm::closeBook) { book, progress -> vm.saveEpubProgress(book, progress) }
         else -> ReaderScreen(vm)
     }
 }

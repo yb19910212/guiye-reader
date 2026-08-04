@@ -123,6 +123,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         repository.updateProgress(book.id, if (pageCount <= 1) 0f else page.toFloat() / (pageCount - 1)); books = repository.allBooks()
     }
 
+    fun saveEpubProgress(book: Book, progress: Float) {
+        repository.updateProgress(book.id, progress)
+        books = repository.allBooks()
+    }
+
     fun playOrPause() {
         when (speechState) {
             SpeechState.IDLE -> { engine.speak(segments, currentParagraph, selectedVoiceId, rate); speechState = SpeechState.PLAYING }

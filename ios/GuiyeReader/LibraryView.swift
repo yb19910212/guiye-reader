@@ -32,6 +32,8 @@ struct LibraryView: View {
                 .navigationDestination(item: $selectedBook) { book in
                     if book.format == .pdf {
                         PDFReaderView(book: book) { repository.updateProgress(bookID: book.id, progress: $0) }
+                    } else if book.format == .epub {
+                        EPUBReaderView(book: book) { repository.updateProgress(bookID: book.id, progress: $0) }
                     } else {
                         ReaderView(book: book, paragraphs: repository.paragraphs(for: book)) { repository.updateProgress(bookID: book.id, progress: $0) }
                     }
