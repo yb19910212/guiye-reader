@@ -48,12 +48,13 @@ struct OPDSCatalogView: View {
                     }
                     Section(feed.metadata.title) {
                         ForEach(Array(publications(feed).enumerated()), id: \.offset) { _, publication in
+                            let title = publication.metadata.title ?? "未命名出版物"
                             VStack(alignment: .leading, spacing: 5) {
-                                Text(publication.metadata.title).font(.headline)
+                                Text(title).font(.headline)
                                 let author = publication.metadata.authors.map(\.name).joined(separator: ", ")
                                 if !author.isEmpty { Text(author).font(.subheadline).foregroundStyle(.secondary) }
                                 if let link = publication.downloadLinks.first {
-                                    Button("下载并导入") { download(publication.metadata.title, link: link) }
+                                    Button("下载并导入") { download(title, link: link) }
                                 } else {
                                     Text("没有可直接下载的无 DRM 文件").font(.caption).foregroundStyle(.secondary)
                                 }
