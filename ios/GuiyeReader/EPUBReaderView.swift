@@ -127,7 +127,7 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(book: book, bridge: bridge, onProgress: onProgress) }
 
     func makeUIViewController(context: Context) -> UIViewController {
-        let host = UIViewController()
+        let host = HighlightHostViewController()
         context.coordinator.preferences = preferences
         context.coordinator.open(in: host)
         return host
@@ -156,15 +156,17 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
                     let publication = try await EPUBReadiumService.shared.open(book.localURL)
                     let saved = UserDefaults.standard.string(forKey: "epub.\(book.id)")
                     let locator = try saved.flatMap { try Locator(json: JSONValue(jsonString: $0), warnings: nil) }
-                    let navigator = try HighlightEPUBNavigatorViewController(
+                    let navigator = try EPUBNavigatorViewController(
                         publication: publication,
                         initialLocation: locator,
                         config: .init(
                             preferences: preferences,
-                            editingActions: EditingAction.defaultActions + [EditingAction(title: "高亮", action: #selector(HighlightEPUBNavigatorViewController.saveHighlight))]
+                            editingActions: EditingAction.defaultActions + [EditingAction(title: "高亮", action: #selector(HighlightHostViewController.saveHighlight))]
                         )
                     )
-                    navigator.onSaveHighlight = { [book] selection in
+                    let highlightHost = host as? HighlightHostViewController
+                    highlightHost?.navigator = navigator
+                    highlightHost?.onSaveHighlight = { [book] selection in
                         guard let json = try? selection.locator.jsonString() else { return }
                         NoteStore().addHighlight(book: book, quote: selection.locator.text.highlight ?? "摘录", locator: json)
                         navigator.reloadHighlights(for: book)
@@ -196,21 +198,24 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
 }
 
 @MainActor
-private final class HighlightEPUBNavigatorViewController: EPUBNavigatorViewController {
+private final class HighlightHostViewController: UIViewController {
+    weak var navigator: EPUBNavigatorViewController?
     var onSaveHighlight: ((Selection) -> Void)?
 
     @objc func saveHighlight() {
-        guard let selection = currentSelection else { return }
+        guard let navigator, let selection = navigator.currentSelection else { return }
         onSaveHighlight?(selection)
-        clearSelection()
+        navigator.clearSelection()
     }
+}
 
+@MainActor
+private extension EPUBNavigatorViewController {
     func reloadHighlights(for book: Book) {
         let decorations = NoteStore().notes.filter { $0.bookID == book.id && $0.quote != nil }.compactMap { note -> Decoration? in
             guard let value = note.locator,
                   let json = try? JSONValue(jsonString: value),
-                  let locator = try? Locator(json: json, warnings: nil),
-                  let locator else { return nil }
+                  let locator = try? Locator(json: json, warnings: nil) else { return nil }
             return Decoration(id: note.id.uuidString, locator: locator, style: .highlight(tint: .systemYellow))
         }
         apply(decorations: decorations, in: "highlights")
