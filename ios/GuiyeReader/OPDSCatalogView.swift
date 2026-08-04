@@ -73,12 +73,22 @@ struct OPDSCatalogView: View {
         return VStack(alignment: .leading, spacing: 5) {
             Text(title).font(.headline)
             if !author.isEmpty { Text(author).font(.subheadline).foregroundStyle(.secondary) }
-            if let link = publication.downloadLinks.first {
+            if let link = downloadableLink(in: publication) {
                 Button("下载并导入") { download(title, link: link) }
             } else {
                 Text("没有可直接下载的无 DRM 文件").font(.caption).foregroundStyle(.secondary)
             }
         }.padding(.vertical, 4)
+    }
+
+    private func downloadableLink(in publication: Publication) -> ReadiumShared.Link? {
+        publication.links.first { link in
+            let mediaType = link.mediaType?.string.lowercased() ?? ""
+            let ext = URL(string: link.href)?.pathExtension.lowercased() ?? ""
+            let supported = mediaType.contains("epub") || mediaType.contains("pdf") || mediaType.contains("text/plain") || ["epub", "pdf", "txt"].contains(ext)
+            let acquisition = link.rels.contains(.opdsAcquisition) || link.rels.contains(.opdsAcquisitionOpenAccess)
+            return supported && acquisition
+        }
     }
 
     private func navigation(_ feed: Feed) -> [ReadiumShared.Link] { feed.navigation + feed.groups.flatMap(\.navigation) }
