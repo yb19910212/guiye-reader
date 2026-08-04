@@ -7,6 +7,8 @@ struct ReadingNote: Identifiable, Codable, Hashable {
     let text: String
     let locator: String?
     let createdAt: Date
+    var quote: String? = nil
+    var color: String? = nil
 }
 
 @MainActor
@@ -23,6 +25,13 @@ final class NoteStore: ObservableObject {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return }
         notes.insert(ReadingNote(id: UUID(), bookID: book.id, bookTitle: book.title, text: cleaned, locator: locator, createdAt: Date()), at: 0)
+        persist()
+    }
+
+    func addHighlight(book: Book, quote: String, locator: String, color: String = "yellow") {
+        let cleaned = quote.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        notes.insert(ReadingNote(id: UUID(), bookID: book.id, bookTitle: book.title, text: cleaned, locator: locator, createdAt: Date(), quote: cleaned, color: color), at: 0)
         persist()
     }
 

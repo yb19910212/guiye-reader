@@ -15,6 +15,7 @@ struct NotesView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         Text(note.bookTitle).font(.headline)
                         Text(note.text)
+                        if note.quote != nil { Label("高亮摘录", systemImage: "highlighter").font(.caption).foregroundStyle(.orange) }
                         Text(note.createdAt.formatted()).font(.caption).foregroundStyle(.secondary)
                     }
                 }

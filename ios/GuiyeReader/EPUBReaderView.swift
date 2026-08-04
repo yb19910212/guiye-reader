@@ -156,11 +156,19 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
                     let publication = try await EPUBReadiumService.shared.open(book.localURL)
                     let saved = UserDefaults.standard.string(forKey: "epub.\(book.id)")
                     let locator = try saved.flatMap { try Locator(json: JSONValue(jsonString: $0), warnings: nil) }
-                    let navigator = try EPUBNavigatorViewController(
+                    let navigator = try HighlightEPUBNavigatorViewController(
                         publication: publication,
                         initialLocation: locator,
-                        config: .init(preferences: preferences)
+                        config: .init(
+                            preferences: preferences,
+                            editingActions: EditingAction.defaultActions + [EditingAction(title: "高亮", action: #selector(HighlightEPUBNavigatorViewController.saveHighlight))]
+                        )
                     )
+                    navigator.onSaveHighlight = { [book] selection in
+                        guard let json = try? selection.locator.jsonString() else { return }
+                        NoteStore().addHighlight(book: book, quote: selection.locator.text.highlight ?? "摘录", locator: json)
+                        navigator.reloadHighlights(for: book)
+                    }
                     navigator.delegate = self
                     host.addChild(navigator)
                     navigator.view.frame = host.view.bounds
@@ -169,6 +177,7 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
                     navigator.didMove(toParent: host)
                     bridge.navigator = navigator
                     bridge.tableOfContents = try await publication.tableOfContents().get()
+                    navigator.reloadHighlights(for: book)
                 } catch {
                     bridge.error = error.localizedDescription
                 }
@@ -183,5 +192,27 @@ private struct EPUBNavigatorContainer: UIViewControllerRepresentable {
         func navigator(_ navigator: Navigator, presentError error: NavigatorError) {
             bridge.error = String(describing: error)
         }
+    }
+}
+
+@MainActor
+private final class HighlightEPUBNavigatorViewController: EPUBNavigatorViewController {
+    var onSaveHighlight: ((Selection) -> Void)?
+
+    @objc func saveHighlight() {
+        guard let selection = currentSelection else { return }
+        onSaveHighlight?(selection)
+        clearSelection()
+    }
+
+    func reloadHighlights(for book: Book) {
+        let decorations = NoteStore().notes.filter { $0.bookID == book.id && $0.quote != nil }.compactMap { note -> Decoration? in
+            guard let value = note.locator,
+                  let json = try? JSONValue(jsonString: value),
+                  let locator = try? Locator(json: json, warnings: nil),
+                  let locator else { return nil }
+            return Decoration(id: note.id.uuidString, locator: locator, style: .highlight(tint: .systemYellow))
+        }
+        apply(decorations: decorations, in: "highlights")
     }
 }

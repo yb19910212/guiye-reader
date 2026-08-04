@@ -27,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -53,6 +54,10 @@ import org.readium.r2.streamer.PublicationOpener
 import org.readium.r2.streamer.parser.DefaultPublicationParser
 import com.guiye.reader.library.Book
 import com.guiye.reader.notes.NoteRepository
+import kotlinx.coroutines.launch
+import org.readium.r2.navigator.Decoration
+import org.readium.r2.navigator.DecorableNavigator
+import android.graphics.Color
 
 private class ReadiumServices(activity: FragmentActivity) {
     private val httpClient = DefaultHttpClient()
@@ -75,6 +80,7 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
     val services = remember { ReadiumServices(activity) }
     val prefs = remember { activity.getSharedPreferences("guiye_positions", 0) }
     val notes = remember { NoteRepository(activity) }
+    val scope = rememberCoroutineScope()
     var publication by remember(book.id) { mutableStateOf<Publication?>(null) }
     var navigator by remember(book.id) { mutableStateOf<EpubNavigatorFragment?>(null) }
     var error by remember(book.id) { mutableStateOf<String?>(null) }
@@ -110,6 +116,15 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
                 title = { Text(book.title) },
                 navigationIcon = { TextButton(onClick = onClose) { Text("‹ 书库") } },
                 actions = {
+                    TextButton(onClick = {
+                        scope.launch {
+                            val selection = navigator?.currentSelection() ?: return@launch
+                            val json = selection.locator.toJSON().toString()
+                            notes.addHighlight(book, selection.locator.text.highlight ?: "摘录", json)
+                            navigator?.clearSelection()
+                            navigator?.applySavedHighlights(book, notes)
+                        }
+                    }) { Text("高亮") }
                     TextButton(onClick = { showsNoteEditor = true }) { Text("笔记") }
                     TextButton(onClick = { showsAppearance = true }) { Text("Aa") }
                     Box {
@@ -133,7 +148,7 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
                     fontSize = fontSize.toDouble(), lineHeight = lineHeight.toDouble(), pageMargins = pageMargins.toDouble(),
                     publisherStyles = false, scroll = scroll,
                     theme = when (theme) { "dark" -> Theme.DARK; "sepia" -> Theme.SEPIA; else -> Theme.LIGHT }
-                )) { navigator = it }
+                )) { navigator = it; scope.launch { it.applySavedHighlights(book, notes) } }
             } ?: if (error == null) CircularProgressIndicator() else Text(error.orEmpty())
         }
     }
@@ -209,3 +224,11 @@ private fun EpubNavigatorHost(book: Book, publication: Publication, preferences:
 }
 
 private fun flatten(links: List<Link>): List<Link> = links.flatMap { listOf(it) + flatten(it.children) }
+
+private suspend fun EpubNavigatorFragment.applySavedHighlights(book: Book, notes: NoteRepository) {
+    val decorations = notes.all().filter { it.bookId == book.id && it.quote != null }.mapNotNull { note ->
+        val locator = note.locator?.let { runCatching { Locator.fromJSON(JSONObject(it)) }.getOrNull() } ?: return@mapNotNull null
+        Decoration(note.id, locator, Decoration.Style.Highlight(Color.rgb(249, 220, 90)))
+    }
+    (this as DecorableNavigator).applyDecorations(decorations, "highlights")
+}
