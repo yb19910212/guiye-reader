@@ -187,13 +187,16 @@ private fun OpdsDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
     val prefs = remember { context.getSharedPreferences("guiye_opds", android.content.Context.MODE_PRIVATE) }
     var address by remember { mutableStateOf(prefs.getString("last_url", "https://standardebooks.org/opds/all") ?: "") }
     var currentUrl by remember { mutableStateOf<String?>(null) }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
     var page by remember { mutableStateOf<OpdsPage?>(null) }
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(currentUrl) {
         val url = currentUrl ?: return@LaunchedEffect
         loading = true; message = null
-        vm.loadOpds(url).onSuccess { page = it }.onFailure { message = it.message }
+        vm.loadOpds(url, username, password).onSuccess { page = it }.onFailure { message = it.message }
         loading = false
     }
     AlertDialog(
@@ -202,15 +205,20 @@ private fun OpdsDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
                 OutlinedTextField(address, { address = it }, label = { Text("OPDS 目录地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(username, { username = it }, label = { Text("用户名（可选）") }, singleLine = true, modifier = Modifier.weight(1f))
+                    OutlinedTextField(password, { password = it }, label = { Text("密码") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.weight(1f))
+                }
                 Button(onClick = { prefs.edit().putString("last_url", address.trim()).apply(); currentUrl = address.trim() }, enabled = !loading && address.isNotBlank(), modifier = Modifier.padding(vertical = 8.dp)) { Text("打开目录") }
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
                 message?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (page != null) OutlinedTextField(query, { query = it }, label = { Text("筛选书名或作者") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     page?.navigation?.forEach { item -> TextButton(onClick = { address = item.url; currentUrl = item.url }, modifier = Modifier.fillMaxWidth()) { Text("› ${item.title}", Modifier.fillMaxWidth()) } }
-                    page?.entries?.forEach { entry ->
+                    page?.entries?.filter { query.isBlank() || it.title.contains(query, true) || it.author?.contains(query, true) == true }?.forEach { entry ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) { Text(entry.title); entry.author?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = Color.Gray) } }
-                            Button(onClick = { message = "正在下载《${entry.title}》"; vm.importOpds(entry) { result -> message = result.fold({ "已导入《${it.title}》" }, { it.message ?: "导入失败" }) } }, enabled = entry.downloadUrl != null) { Text(if (entry.downloadUrl == null) "不可下载" else "导入") }
+                            Button(onClick = { message = "正在下载《${entry.title}》"; vm.importOpds(entry, username, password) { result -> message = result.fold({ "已导入《${it.title}》" }, { it.message ?: "导入失败" }) } }, enabled = entry.downloadUrl != null) { Text(if (entry.downloadUrl == null) "不可下载" else "导入") }
                         }
                     }
                 }

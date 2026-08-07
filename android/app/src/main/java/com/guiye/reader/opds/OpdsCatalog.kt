@@ -12,6 +12,7 @@ import org.readium.r2.shared.util.http.HttpRequest
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import android.util.Base64
 
 data class OpdsEntry(val title: String, val author: String?, val downloadUrl: String?, val mediaType: String?)
 data class OpdsNavigation(val title: String, val url: String)
@@ -20,9 +21,10 @@ data class OpdsPage(val title: String, val entries: List<OpdsEntry>, val navigat
 class OpdsCatalog(private val context: Context) {
     private val client = DefaultHttpClient()
 
-    suspend fun load(url: String): Result<OpdsPage> = withContext(Dispatchers.IO) { runCatching {
+    suspend fun load(url: String, username: String = "", password: String = ""): Result<OpdsPage> = withContext(Dispatchers.IO) { runCatching {
         val absolute = requireNotNull(AbsoluteUrl(url)) { "OPDS 地址无效" }
-        val request = HttpRequest(absolute)
+        require(username.isBlank() || url.startsWith("https://", true)) { "使用账号时必须使用 HTTPS 地址" }
+        val request = HttpRequest(absolute, headers = authorizationHeaders(username, password))
         val data = OPDS2Parser.parseRequest(request, client).getOrNull()
             ?: OPDS1Parser.parseRequest(request, client).getOrNull()
             ?: error("无法解析 OPDS 目录")
@@ -36,8 +38,9 @@ class OpdsCatalog(private val context: Context) {
         )
     } }
 
-    suspend fun download(entry: OpdsEntry): Result<File> = withContext(Dispatchers.IO) { runCatching {
+    suspend fun download(entry: OpdsEntry, username: String = "", password: String = ""): Result<File> = withContext(Dispatchers.IO) { runCatching {
         val source = URL(requireNotNull(entry.downloadUrl))
+        require(username.isBlank() || source.protocol.equals("https", true)) { "使用账号时必须通过 HTTPS 下载" }
         val extension = when {
             entry.mediaType?.contains("epub", true) == true -> "epub"
             entry.mediaType?.contains("pdf", true) == true -> "pdf"
@@ -48,6 +51,7 @@ class OpdsCatalog(private val context: Context) {
         val connection = source.openConnection() as HttpURLConnection
         connection.connectTimeout = 15_000; connection.readTimeout = 60_000
         connection.instanceFollowRedirects = true
+        authorizationValue(username, password)?.let { connection.setRequestProperty("Authorization", it) }
         try {
             require(connection.responseCode in 200..299) { "下载失败（HTTP ${connection.responseCode}）" }
             connection.inputStream.use { input -> target.outputStream().use { input.copyTo(it) } }
@@ -55,9 +59,18 @@ class OpdsCatalog(private val context: Context) {
         target
     } }
 
+    private fun authorizationHeaders(username: String, password: String): Map<String, List<String>> =
+        authorizationValue(username, password)?.let { mapOf("Authorization" to listOf(it)) } ?: emptyMap()
+
+    private fun authorizationValue(username: String, password: String): String? {
+        if (username.isBlank()) return null
+        val token = Base64.encodeToString("$username:$password".toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        return "Basic $token"
+    }
+
     private fun entry(publication: Publication): OpdsEntry {
         val link = publication.links.firstOrNull { candidate ->
-            candidate.rels.any { it == "http://opds-spec.org/acquisition" } &&
+            candidate.rels.any { it == "http://opds-spec.org/acquisition" || it == "http://opds-spec.org/acquisition/open-access" } &&
                 (candidate.mediaType?.toString()?.let { it.contains("epub", true) || it.contains("pdf", true) || it.contains("text/plain", true) } == true ||
                     candidate.href.toString().substringAfterLast('.', "").lowercase() in setOf("epub", "pdf", "txt"))
         }

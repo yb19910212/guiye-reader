@@ -134,11 +134,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun backupJson(): String = repository.backupJson()
 
-    suspend fun loadOpds(url: String): Result<OpdsPage> = opdsCatalog.load(url)
+    suspend fun loadOpds(url: String, username: String = "", password: String = ""): Result<OpdsPage> = opdsCatalog.load(url, username, password)
 
-    fun importOpds(entry: OpdsEntry, completed: (Result<Book>) -> Unit) {
+    fun importOpds(entry: OpdsEntry, username: String = "", password: String = "", completed: (Result<Book>) -> Unit) {
         viewModelScope.launch {
-            val result = opdsCatalog.download(entry).fold(
+            val result = opdsCatalog.download(entry, username, password).fold(
                 onSuccess = { file -> withContext(Dispatchers.IO) { repository.import(file) }.also { file.delete() } },
                 onFailure = { Result.failure(it) }
             )
