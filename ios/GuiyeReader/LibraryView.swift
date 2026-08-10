@@ -14,6 +14,7 @@ struct LibraryView: View {
     @State private var showsRemoteLibrary = false
     @State private var showsThemes = false
     @State private var exportsBackup = false
+    @State private var pendingImportURLs: [URL] = []
     private var epubType: UTType { UTType(filenameExtension: "epub") ?? .data }
     private var txtType: UTType { UTType(filenameExtension: "txt") ?? .plainText }
 
@@ -52,7 +53,7 @@ struct LibraryView: View {
                     } else if book.format == .epub {
                         EPUBReaderView(book: book) { repository.updateProgress(bookID: book.id, progress: $0) }
                     } else {
-                        ReaderView(book: book, paragraphs: repository.paragraphs(for: book)) { repository.updateProgress(bookID: book.id, progress: $0) }
+                        ReaderView(book: book, loadParagraphs: { await repository.paragraphs(for: book) }) { repository.updateProgress(bookID: book.id, progress: $0) }
                     }
                 }
                 .sheet(isPresented: $showsNotes) { NotesView(books: repository.books) }
@@ -67,12 +68,21 @@ struct LibraryView: View {
         .tint(theme.palette.accent)
         .sheet(isPresented: $importing) {
             DocumentPicker(contentTypes: [txtType, .plainText, .text, .pdf, epubType], onPicked: { urls in
+                pendingImportURLs = urls
                 importing = false
-                repository.importFiles(urls)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    let queued = pendingImportURLs
+                    pendingImportURLs = []
+                    repository.importFiles(queued)
+                }
             }, onFailure: { error in
                 importing = false
-                repository.lastError = error.localizedDescription
-                repository.importNotice = error.localizedDescription
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    repository.lastError = error.localizedDescription
+                    repository.importNotice = error.localizedDescription
+                }
             })
         }
         .alert("导入结果", isPresented: Binding(get: { repository.importNotice != nil }, set: { if !$0 { repository.importNotice = nil } })) {

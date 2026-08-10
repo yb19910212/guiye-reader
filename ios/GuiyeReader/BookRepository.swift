@@ -52,18 +52,14 @@ final class BookRepository: ObservableObject {
         }
     }
 
-    func paragraphs(for book: Book) -> [String] {
-        guard book.format == .txt, let data = try? Data(contentsOf: book.localURL) else {
+    nonisolated func paragraphs(for book: Book) async -> [String] {
+        guard book.format == .txt else {
             return [book.format == .epub ? "EPUB 已安全导入本地书库。Readium 导航器正在接入。" : "PDF 已安全导入本地书库。PDF 导航器正在接入。"]
         }
-        let gb18030 = String.Encoding(rawValue: 0x8000_0632)
-        let text = String(data: data, encoding: .utf8)
-            ?? String(data: data, encoding: .utf16)
-            ?? String(data: data, encoding: gb18030)
-            ?? String(data: data, encoding: .isoLatin1)
-            ?? "无法识别文本编码"
-        let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
-        return normalized.components(separatedBy: CharacterSet.newlines).map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return await Task.detached(priority: .userInitiated) {
+            guard let data = try? Data(contentsOf: book.localURL, options: .mappedIfSafe) else { return ["无法读取文件内容"] }
+            return TXTParser.parse(data: data)
+        }.value
     }
 
     func updateProgress(bookID: String, progress: Double) {

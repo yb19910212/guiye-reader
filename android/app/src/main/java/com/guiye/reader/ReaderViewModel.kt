@@ -139,14 +139,22 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun openBook(book: Book) {
-        currentBook = book
-        paragraphs = if (book.format == BookFormat.TXT) {
-            repository.readText(book).getOrNull()?.split(Regex("\\n\\s*\\n|(?<=[。！？.!?])\\s+"))?.map { it.trim() }?.filter { it.isNotBlank() } ?: listOf("文件内容为空")
-        } else {
-            listOf(if (book.format == BookFormat.EPUB) "EPUB 已安全导入本地书库。Readium 导航器正在接入。" else "PDF 已安全导入本地书库。PDF 导航器正在接入。")
-        }
-        currentParagraph = positionPrefs.getInt("text.${book.id}", 0).coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
         stopSpeech()
+        currentBook = book
+        if (book.format == BookFormat.TXT) {
+            paragraphs = listOf("正在载入正文…")
+            currentParagraph = 0
+            viewModelScope.launch {
+                val loaded = withContext(Dispatchers.IO) { repository.readParagraphs(book).getOrElse { listOf("无法读取文件：${it.message}") } }
+                if (currentBook?.id == book.id) {
+                    paragraphs = loaded
+                    currentParagraph = positionPrefs.getInt("text.${book.id}", 0).coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
+                }
+            }
+        } else {
+            paragraphs = listOf(if (book.format == BookFormat.EPUB) "EPUB 已安全导入本地书库。Readium 导航器正在接入。" else "PDF 已安全导入本地书库。PDF 导航器正在接入。")
+            currentParagraph = positionPrefs.getInt("text.${book.id}", 0).coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
+        }
     }
 
     fun closeBook() { stopSpeech(); currentBook = null; paragraphs = sampleParagraphs }

@@ -65,6 +65,8 @@ class BookRepository(private val context: Context) {
         }.trim()
     }
 
+    fun readParagraphs(book: Book): Result<List<String>> = readText(book).map(TextParser::paragraphs)
+
     fun updateProgress(bookId: String, progress: Float) {
         save(allBooks().map { if (it.id == bookId) it.copy(progress = progress.coerceIn(0f, 1f)) else it })
     }

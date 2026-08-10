@@ -26,7 +26,7 @@ jobs:
           gradle-version: "9.5.0"
       - name: Build debug APK
         working-directory: android
-        run: gradle assembleDebug
+        run: gradle testDebugUnitTest assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: GuiyeReader-android-debug
@@ -39,6 +39,10 @@ jobs:
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: "16.4"
+      - name: Large TXT performance smoke test
+        run: |
+          xcrun swiftc ios/GuiyeReader/TXTParser.swift ios/Tests/TXTParserSmoke.swift -o /tmp/txt-parser-smoke
+          /tmp/txt-parser-smoke
       - name: Build unsigned device app
         run: >-
           xcodebuild -project ios/GuiyeReader.xcodeproj

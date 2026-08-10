@@ -11,12 +11,13 @@ final class ReaderViewModel: ObservableObject {
     ]
 
     let title: String
-    let paragraphs: [String]
+    @Published private(set) var paragraphs: [String]
     @Published var currentParagraph = 0
     @Published var playbackState: SpeechPlaybackState = .idle
     @Published var rate: Float = 0.5
     @Published var selectedVoiceID: String?
     private let engine: SystemSpeechEngine
+    private let requestedStartIndex: Int
     var voices: [SpeechVoice] { engine.voices }
     private var segments: [SpeechSegment] { paragraphs.enumerated().map { SpeechSegment(id: $0.offset, text: $0.element, languageTag: detectedLanguage(for: $0.element)) } }
 
@@ -24,9 +25,17 @@ final class ReaderViewModel: ObservableObject {
         self.title = title
         self.paragraphs = paragraphs.isEmpty ? ["文件内容为空"] : paragraphs
         self.engine = engine
+        self.requestedStartIndex = startIndex
         self.currentParagraph = min(max(0, startIndex), self.paragraphs.count - 1)
         engine.onSegmentStarted = { [weak self] index in Task { @MainActor in self?.currentParagraph = index } }
         engine.onQueueCompleted = { [weak self] in Task { @MainActor in self?.playbackState = .idle } }
+    }
+
+    func replaceParagraphs(_ values: [String]) {
+        engine.stop()
+        playbackState = .idle
+        paragraphs = values.isEmpty ? ["文件内容为空"] : values
+        currentParagraph = min(max(0, requestedStartIndex), paragraphs.count - 1)
     }
 
     func playOrPause() {

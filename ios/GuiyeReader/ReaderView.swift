@@ -5,20 +5,22 @@ struct ReaderView: View {
     @StateObject private var model: ReaderViewModel
     private let bookID: String?
     private let onProgress: (Double) -> Void
+    private let loadParagraphs: (() async -> [String])?
 
-    init(book: Book? = nil, paragraphs: [String]? = nil, onProgress: @escaping (Double) -> Void = { _ in }) {
+    init(book: Book? = nil, paragraphs: [String]? = nil, loadParagraphs: (() async -> [String])? = nil, onProgress: @escaping (Double) -> Void = { _ in }) {
         let id = book?.id
         self.bookID = id
         self.onProgress = onProgress
+        self.loadParagraphs = loadParagraphs
         let start = id.map { UserDefaults.standard.integer(forKey: "text.\($0)") } ?? 0
-        _model = StateObject(wrappedValue: ReaderViewModel(title: book?.title ?? "为什么阅读需要一个闭环", paragraphs: paragraphs ?? ReaderViewModel.sampleParagraphs, startIndex: start))
+        _model = StateObject(wrappedValue: ReaderViewModel(title: book?.title ?? "为什么阅读需要一个闭环", paragraphs: paragraphs ?? (loadParagraphs == nil ? ReaderViewModel.sampleParagraphs : ["正在载入正文…"]), startIndex: start))
     }
 
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: 12) {
                         Text(model.title)
                             .font(.largeTitle.weight(.semibold))
                             .foregroundStyle(theme.palette.text)
@@ -27,8 +29,8 @@ struct ReaderView: View {
                             .foregroundStyle(theme.palette.accent)
                             .padding(.bottom, 10)
 
-                        ForEach(Array(model.paragraphs.enumerated()), id: \.offset) { index, paragraph in
-                            Text(paragraph)
+                        ForEach(model.paragraphs.indices, id: \.self) { index in
+                            Text(model.paragraphs[index])
                                 .font(.system(size: 20, design: .serif))
                                 .lineSpacing(9)
                                 .foregroundStyle(theme.palette.text)
@@ -53,6 +55,9 @@ struct ReaderView: View {
             .navigationTitle(model.title)
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { speechControls }
+            .task(id: bookID) {
+                if let loadParagraphs { model.replaceParagraphs(await loadParagraphs()) }
+            }
         }
         .tint(theme.palette.accent)
     }

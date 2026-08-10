@@ -11,8 +11,8 @@ android {
         applicationId = "com.guiye.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
     }
 
     buildFeatures { compose = true }
@@ -45,4 +45,5 @@ dependencies {
     implementation("org.readium.kotlin-toolkit:readium-navigator:3.3.0")
     implementation("org.readium.kotlin-toolkit:readium-opds:3.3.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }
