@@ -5,6 +5,11 @@ struct SpeechVoice: Identifiable, Hashable {
     let name: String
     let languageTag: String
     let quality: String
+    var qualityRank: Int { quality == "Premium" ? 3 : (quality == "增强" ? 2 : 1) }
+    var languageName: String {
+        let locale = Locale(identifier: "zh-Hans")
+        return locale.localizedString(forIdentifier: languageTag) ?? languageTag
+    }
 }
 
 struct SpeechSegment: Identifiable, Hashable {

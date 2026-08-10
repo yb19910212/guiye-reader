@@ -6,6 +6,7 @@ struct ReaderView: View {
     private let bookID: String?
     private let onProgress: (Double) -> Void
     private let loadParagraphs: (() async -> [String])?
+    @State private var showsVoiceLibrary = false
 
     init(book: Book? = nil, paragraphs: [String]? = nil, loadParagraphs: (() async -> [String])? = nil, onProgress: @escaping (Double) -> Void = { _ in }) {
         let id = book?.id
@@ -76,12 +77,7 @@ struct ReaderView: View {
                 Button("下一段", action: model.next)
             }
             HStack {
-                Menu {
-                    Button("自动匹配段落语言") { model.chooseVoice(nil) }
-                    ForEach(model.voices.prefix(50)) { voice in
-                        Button("\(voice.name) · \(voice.languageTag) · \(voice.quality)") { model.chooseVoice(voice.id) }
-                    }
-                } label: {
+                Button { showsVoiceLibrary = true } label: {
                     Label(selectedVoiceName, systemImage: "waveform")
                         .lineLimit(1)
                 }
@@ -95,12 +91,89 @@ struct ReaderView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
+        .sheet(isPresented: $showsVoiceLibrary) { VoiceLibraryView(model: model) }
     }
 
     private var selectedVoiceName: String {
         model.voices.first(where: { $0.id == model.selectedVoiceID })?.name ?? "自动音色"
     }
     private var speedDisplay: Float { 0.6 + (model.rate - 0.35) / 0.30 }
+}
+
+private struct VoiceLibraryView: View {
+    @ObservedObject var model: ReaderViewModel
+    @State private var query = ""
+    @State private var highQualityOnly = true
+    @Environment(\.dismiss) private var dismiss
+
+    private var voices: [SpeechVoice] {
+        model.voices.filter { voice in
+            (!highQualityOnly || voice.qualityRank >= 2)
+                && (query.isEmpty || voice.name.localizedCaseInsensitiveContains(query) || voice.languageName.localizedCaseInsensitiveContains(query) || voice.languageTag.localizedCaseInsensitiveContains(query))
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        model.chooseVoice(nil)
+                        dismiss()
+                    } label: {
+                        Label("自动匹配每段语言", systemImage: model.selectedVoiceID == nil ? "checkmark.circle.fill" : "wand.and.stars")
+                    }
+                    Toggle("优先显示 Premium / 增强音色", isOn: $highQualityOnly)
+                    Text("更多高级音色：打开系统“设置 › 辅助功能 › 朗读内容 › 声音”下载。Siri 专属音色不向第三方 App 开放。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if voices.isEmpty {
+                    ContentUnavailableView("没有匹配的高级音色", systemImage: "waveform", description: Text("关闭上方筛选可查看设备全部音色"))
+                } else {
+                    ForEach(languageGroups) { group in
+                        Section(group.key) {
+                            ForEach(group.value) { voice in
+                                HStack(spacing: 12) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(voice.name).font(.headline)
+                                        Text("\(voice.languageName) · \(voice.quality)").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if model.selectedVoiceID == voice.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor) }
+                                    Button("试听") { model.previewVoice(voice) }.buttonStyle(.bordered)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture { model.chooseVoice(voice.id) }
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $query, prompt: "搜索音色或语言")
+            .navigationTitle("智能语音")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+
+    private var languageGroups: [VoiceGroup] {
+        let grouped = Dictionary(grouping: voices) { voice -> String in
+            if voice.languageTag.hasPrefix("zh-CN") { return "普通话" }
+            if voice.languageTag.hasPrefix("zh-HK") || voice.languageTag.hasPrefix("yue") { return "粤语" }
+            if voice.languageTag.hasPrefix("zh-TW") { return "台语 / 繁体中文" }
+            if voice.languageTag.hasPrefix("en") { return "英语" }
+            if voice.languageTag.hasPrefix("ja") { return "日语" }
+            if voice.languageTag.hasPrefix("ko") { return "韩语" }
+            return "其他语言"
+        }
+        let order = ["普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
+        return order.compactMap { key in grouped[key].map { VoiceGroup(key: key, value: $0) } }
+    }
+}
+
+private struct VoiceGroup: Identifiable {
+    let key: String
+    let value: [SpeechVoice]
+    var id: String { key }
 }
 
 #Preview { ReaderView().environmentObject(ThemeStore()) }

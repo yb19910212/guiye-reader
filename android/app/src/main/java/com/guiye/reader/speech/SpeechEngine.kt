@@ -6,8 +6,16 @@ data class SpeechVoice(
     val id: String,
     val name: String,
     val languageTag: String,
-    val isNetworkRequired: Boolean
-)
+    val isNetworkRequired: Boolean,
+    val quality: Int
+) {
+    val qualityLabel: String get() = when {
+        quality >= 500 -> "顶级"
+        quality >= 400 -> "高品质"
+        quality >= 300 -> "标准"
+        else -> "基础"
+    }
+}
 
 data class SpeechSegment(val id: Int, val text: String, val languageTag: String)
 

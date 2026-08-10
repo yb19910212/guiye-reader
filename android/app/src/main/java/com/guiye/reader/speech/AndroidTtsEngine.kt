@@ -22,8 +22,10 @@ class AndroidTtsEngine(
 
     override val voices: List<SpeechVoice>
         get() = if (!initialized) emptyList() else tts.voices.orEmpty()
-            .sortedWith(compareBy({ it.locale.displayLanguage }, { it.name }))
-            .map { SpeechVoice(it.name, it.locale.displayName, it.locale.toLanguageTag(), it.isNetworkConnectionRequired) }
+            .sortedWith(compareByDescending<android.speech.tts.Voice> { it.quality }
+                .thenBy { if (it.locale.language in setOf("zh", "en", "ja", "ko")) 0 else 1 }
+                .thenBy { it.locale.displayLanguage }.thenBy { it.name })
+            .map { SpeechVoice(it.name, it.locale.displayName, it.locale.toLanguageTag(), it.isNetworkConnectionRequired, it.quality) }
 
     override fun onInit(status: Int) {
         initialized = status == TextToSpeech.SUCCESS

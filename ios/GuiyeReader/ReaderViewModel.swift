@@ -49,6 +49,16 @@ final class ReaderViewModel: ObservableObject {
     func next() { move(to: min(paragraphs.count - 1, currentParagraph + 1)) }
     func move(to index: Int) { currentParagraph = index; restartIfActive() }
     func chooseVoice(_ id: String?) { selectedVoiceID = id; restartIfActive() }
+    func previewVoice(_ voice: SpeechVoice) {
+        selectedVoiceID = voice.id
+        let sample: String
+        if voice.languageTag.hasPrefix("zh") { sample = "你好，我是归页。愿这段声音陪你读完每一本好书。" }
+        else if voice.languageTag.hasPrefix("ja") { sample = "こんにちは。心地よい声で読書を楽しみましょう。" }
+        else if voice.languageTag.hasPrefix("ko") { sample = "안녕하세요. 편안한 목소리로 책을 읽어 드릴게요." }
+        else { sample = "Hello, this is Guiye Reader. Enjoy a natural and comfortable reading voice." }
+        engine.speak(segments: [SpeechSegment(id: currentParagraph, text: sample, languageTag: voice.languageTag)], from: 0, voiceID: voice.id, rate: rate)
+        playbackState = .playing
+    }
     func updateRate(_ value: Float) { rate = value; restartIfActive() }
     private func restartIfActive() {
         guard playbackState != .idle else { return }

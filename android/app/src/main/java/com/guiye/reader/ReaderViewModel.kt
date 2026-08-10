@@ -206,6 +206,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun previous() { selectParagraph((currentParagraph - 1).coerceAtLeast(0)); restartIfActive() }
     fun next() { selectParagraph((currentParagraph + 1).coerceAtMost(paragraphs.lastIndex)); restartIfActive() }
     fun chooseVoice(id: String?) { selectedVoiceId = id; restartIfActive() }
+    fun previewVoice(voice: SpeechVoice) {
+        selectedVoiceId = voice.id
+        val sample = when {
+            voice.languageTag.startsWith("zh") -> "你好，我是归页。愿这段声音陪你读完每一本好书。"
+            voice.languageTag.startsWith("ja") -> "こんにちは。心地よい声で読書を楽しみましょう。"
+            voice.languageTag.startsWith("ko") -> "안녕하세요. 편안한 목소리로 책을 읽어 드릴게요."
+            else -> "Hello, this is Guiye Reader. Enjoy a natural and comfortable reading voice."
+        }
+        engine.speak(listOf(SpeechSegment(currentParagraph, sample, voice.languageTag)), 0, voice.id, rate)
+        speechState = SpeechState.PLAYING
+    }
     fun updateRate(value: Float) { rate = value; restartIfActive() }
     private fun restartIfActive() {
         if (speechState != SpeechState.IDLE) { engine.speak(segments, currentParagraph, selectedVoiceId, rate); speechState = SpeechState.PLAYING }

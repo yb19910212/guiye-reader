@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -289,7 +290,7 @@ private fun formatBytes(bytes: Long): String = when {
 
 @Composable
 private fun ReaderScreen(vm: ReaderViewModel) {
-    var voiceMenu by remember { mutableStateOf(false) }
+    var showsVoiceLibrary by remember { mutableStateOf(false) }
     Scaffold(
         topBar = { TopAppBar(title = { Text(vm.currentBook?.title ?: "阅读") }, navigationIcon = { TextButton(onClick = vm::closeBook) { Text("‹ 书库") } }, actions = { Text("Aa", modifier = Modifier.padding(16.dp)) }) },
         bottomBar = {
@@ -301,13 +302,7 @@ private fun ReaderScreen(vm: ReaderViewModel) {
                         TextButton(onClick = vm::next) { Text("下一段") }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box {
-                            TextButton(onClick = { voiceMenu = true }) { Text(vm.voices.firstOrNull { it.id == vm.selectedVoiceId }?.name ?: "自动音色") }
-                            DropdownMenu(expanded = voiceMenu, onDismissRequest = { voiceMenu = false }) {
-                                DropdownMenuItem(text = { Text("自动匹配段落语言") }, onClick = { vm.chooseVoice(null); voiceMenu = false })
-                                vm.voices.take(30).forEach { voice -> DropdownMenuItem(text = { Text("${voice.name} · ${voice.languageTag}") }, onClick = { vm.chooseVoice(voice.id); voiceMenu = false }) }
-                            }
-                        }
+                        TextButton(onClick = { showsVoiceLibrary = true }) { Text(vm.voices.firstOrNull { it.id == vm.selectedVoiceId }?.name ?: "自动音色") }
                         Text("${"%.1f".format(vm.rate)}×")
                         Slider(value = vm.rate, onValueChange = vm::updateRate, valueRange = .6f..1.6f, modifier = Modifier.weight(1f))
                     }
@@ -326,4 +321,54 @@ private fun ReaderScreen(vm: ReaderViewModel) {
             }
         }
     }
+    if (showsVoiceLibrary) VoiceLibraryDialog(vm) { showsVoiceLibrary = false }
+}
+
+@Composable
+private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var query by remember { mutableStateOf("") }
+    var language by remember { mutableStateOf("all") }
+    var highQualityOnly by remember { mutableStateOf(true) }
+    val voices = vm.voices.filter { voice ->
+        (!highQualityOnly || voice.quality >= 400)
+            && (language == "all" || voice.languageTag.startsWith(language))
+            && (query.isBlank() || voice.name.contains(query, true) || voice.languageTag.contains(query, true) || voice.qualityLabel.contains(query, true))
+    }
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("智能语音") },
+        text = { Column(Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
+            OutlinedTextField(query, { query = it }, label = { Text("搜索音色或语言") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf("all" to "全部", "zh" to "中文", "en" to "英语", "ja" to "日语", "ko" to "韩语").forEach { (value, label) ->
+                    FilterChip(selected = language == value, onClick = { language = value }, label = { Text(label) })
+                }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("只看高品质音色", Modifier.weight(1f)); Switch(highQualityOnly, { highQualityOnly = it })
+            }
+            TextButton(onClick = { vm.chooseVoice(null) }) { Text(if (vm.selectedVoiceId == null) "✓ 自动匹配每段语言" else "自动匹配每段语言") }
+            if (voices.isEmpty()) Text("没有匹配的高品质音色，可关闭筛选或下载更多语音数据。", color = MaterialTheme.colorScheme.secondary)
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                voices.forEach { voice ->
+                    Row(Modifier.fillMaxWidth().clickable { vm.chooseVoice(voice.id) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(voice.name, style = MaterialTheme.typography.titleSmall)
+                            Text("${voice.languageTag} · ${voice.qualityLabel}${if (voice.isNetworkRequired) " · 联网" else " · 本地"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                        }
+                        if (vm.selectedVoiceId == voice.id) Text("✓", color = MaterialTheme.colorScheme.primary)
+                        TextButton(onClick = { vm.previewVoice(voice) }) { Text("试听") }
+                    }
+                    HorizontalDivider()
+                }
+            }
+            TextButton(onClick = {
+                val intent = android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
+                runCatching { context.startActivity(intent) }.onFailure { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            }) { Text("下载更多系统音色") }
+            Text("音色数量取决于系统语音引擎；可安装 Google、Samsung 等 TTS 引擎。", style = MaterialTheme.typography.bodySmall)
+        } },
+        confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
+    )
 }

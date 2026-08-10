@@ -19,14 +19,26 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 
     var voices: [SpeechVoice] {
         AVSpeechSynthesisVoice.speechVoices()
-            .sorted { ($0.language, $0.name) < ($1.language, $1.name) }
             .map {
+                let quality: String
+                switch $0.quality {
+                case .premium: quality = "Premium"
+                case .enhanced: quality = "增强"
+                default: quality = "标准"
+                }
                 SpeechVoice(
                     id: $0.identifier,
                     name: $0.name,
                     languageTag: $0.language,
-                    quality: $0.quality == .enhanced ? "增强" : "标准"
+                    quality: quality
                 )
+            }
+            .sorted {
+                if $0.qualityRank != $1.qualityRank { return $0.qualityRank > $1.qualityRank }
+                let leftPreferred = $0.languageTag.hasPrefix("zh") || $0.languageTag.hasPrefix("en")
+                let rightPreferred = $1.languageTag.hasPrefix("zh") || $1.languageTag.hasPrefix("en")
+                if leftPreferred != rightPreferred { return leftPreferred }
+                return ($0.languageTag, $0.name) < ($1.languageTag, $1.name)
             }
     }
 
