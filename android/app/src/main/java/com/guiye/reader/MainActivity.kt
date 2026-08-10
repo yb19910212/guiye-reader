@@ -50,7 +50,7 @@ class MainActivity : FragmentActivity() {
             val prefs = remember { getSharedPreferences("guiye_appearance", android.content.Context.MODE_PRIVATE) }
             var selectedTheme by remember { mutableStateOf(runCatching { ReaderTheme.valueOf(prefs.getString("theme", "PAPER") ?: "PAPER") }.getOrDefault(ReaderTheme.PAPER)) }
             MaterialTheme(colorScheme = selectedTheme.colors) {
-                GuiyeApp(selectedTheme) { theme -> selectedTheme = theme; prefs.edit().putString("theme", theme.name).apply() }
+                GuiyeApp(theme = selectedTheme, onThemeChange = { theme -> selectedTheme = theme; prefs.edit().putString("theme", theme.name).apply() })
             }
         }
     }
