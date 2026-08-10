@@ -31,27 +31,35 @@ import com.guiye.reader.notes.NoteRepository
 import com.guiye.reader.speech.SpeechState
 import com.guiye.reader.opds.OpdsPage
 
-private val Paper = Color(0xFFF6F3EA)
-private val Ink = Color(0xFF1E2B24)
-private val Moss = Color(0xFF315F49)
-private val Highlight = Color(0xFFE3ECDD)
+private enum class ReaderTheme(val title: String) {
+    PAPER("纸张"), SEPIA("暖棕"), FOREST("森林"), NIGHT("夜间");
+
+    val colors: ColorScheme get() = when (this) {
+        PAPER -> lightColorScheme(primary = Color(0xFF315F49), background = Color(0xFFF6F3EA), surface = Color(0xFFF6F3EA), surfaceVariant = Color(0xFFE9E5D8), onBackground = Color(0xFF1E2B24), onSurface = Color(0xFF1E2B24), secondaryContainer = Color(0xFFE3ECDD))
+        SEPIA -> lightColorScheme(primary = Color(0xFF8C4D1F), background = Color(0xFFE8D6B3), surface = Color(0xFFF8EACC), surfaceVariant = Color(0xFFDFC59A), onBackground = Color(0xFF3D2617), onSurface = Color(0xFF3D2617), secondaryContainer = Color(0xFFD4B076))
+        FOREST -> lightColorScheme(primary = Color(0xFF1A5738), background = Color(0xFFD4E0CC), surface = Color(0xFFE8EFDF), surfaceVariant = Color(0xFFC2D3BC), onBackground = Color(0xFF142D1E), onSurface = Color(0xFF142D1E), secondaryContainer = Color(0xFFA9C7A6))
+        NIGHT -> darkColorScheme(primary = Color(0xFFDB9E33), background = Color(0xFF0E1310), surface = Color(0xFF19201B), surfaceVariant = Color(0xFF29332B), onBackground = Color(0xFFE1E6D7), onSurface = Color(0xFFE1E6D7), secondaryContainer = Color(0xFF334736))
+    }
+}
 
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = Moss, background = Paper, surface = Paper, onBackground = Ink)) {
-                GuiyeApp()
+            val prefs = remember { getSharedPreferences("guiye_appearance", android.content.Context.MODE_PRIVATE) }
+            var selectedTheme by remember { mutableStateOf(runCatching { ReaderTheme.valueOf(prefs.getString("theme", "PAPER") ?: "PAPER") }.getOrDefault(ReaderTheme.PAPER)) }
+            MaterialTheme(colorScheme = selectedTheme.colors) {
+                GuiyeApp(selectedTheme) { theme -> selectedTheme = theme; prefs.edit().putString("theme", theme.name).apply() }
             }
         }
     }
 }
 
 @Composable
-private fun GuiyeApp(vm: ReaderViewModel = viewModel()) {
+private fun GuiyeApp(theme: ReaderTheme, onThemeChange: (ReaderTheme) -> Unit, vm: ReaderViewModel = viewModel()) {
     when (vm.currentBook?.format) {
-        null -> LibraryScreen(vm)
+        null -> LibraryScreen(vm, theme, onThemeChange)
         BookFormat.PDF -> PdfReaderScreen(vm, vm.currentBook!!)
         BookFormat.EPUB -> EpubReaderScreen(vm.currentBook!!, vm::closeBook) { book, progress -> vm.saveEpubProgress(book, progress) }
         else -> ReaderScreen(vm)
@@ -86,12 +94,13 @@ private fun PdfReaderScreen(vm: ReaderViewModel, book: Book) {
 }
 
 @Composable
-private fun LibraryScreen(vm: ReaderViewModel) {
+private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange: (ReaderTheme) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val notes = remember { NoteRepository(context) }
     var showsNotes by remember { mutableStateOf(false) }
     var showsAISettings by remember { mutableStateOf(false) }
     var showsOpds by remember { mutableStateOf(false) }
+    var showsThemes by remember { mutableStateOf(false) }
     var searchText by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("all") }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -104,15 +113,16 @@ private fun LibraryScreen(vm: ReaderViewModel) {
                 context.startActivity(android.content.Intent.createChooser(intent, "导出归页备份"))
             }) { Text("备份") }
             TextButton(onClick = { showsAISettings = true }) { Text("AI") }
+            TextButton(onClick = { showsThemes = true }) { Text("主题") }
             TextButton(onClick = { showsOpds = true }) { Text("OPDS") }
             TextButton(onClick = { showsNotes = true }) { Text("笔记") }
             TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
         }) },
         floatingActionButton = { FloatingActionButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("＋") } }
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize().background(Paper).padding(horizontal = 20.dp)) {
+        Column(Modifier.padding(padding).fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 20.dp)) {
             Text("我的书库", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 18.dp))
-            Text("书籍保存在本机 · EPUB / PDF / TXT", color = Moss, modifier = Modifier.padding(top = 5.dp, bottom = 20.dp))
+            Text("书籍保存在本机 · EPUB / PDF / TXT", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 5.dp, bottom = 20.dp))
             OutlinedTextField(value = searchText, onValueChange = { searchText = it }, label = { Text("搜索书名或作者") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf("all" to "全部", "reading" to "在读", "unread" to "未读", "finished" to "读完").forEach { (value, label) ->
@@ -179,6 +189,16 @@ private fun LibraryScreen(vm: ReaderViewModel) {
     if (showsOpds) {
         OpdsDialog(vm) { showsOpds = false }
     }
+    if (showsThemes) {
+        AlertDialog(onDismissRequest = { showsThemes = false }, title = { Text("外观主题") }, text = {
+            Column { ReaderTheme.entries.forEach { option ->
+                Row(Modifier.fillMaxWidth().clickable { onThemeChange(option) }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = theme == option, onClick = { onThemeChange(option) })
+                    Text(option.title, Modifier.padding(start = 10.dp))
+                }
+            } }
+        }, confirmButton = { TextButton(onClick = { showsThemes = false }) { Text("完成") } })
+    }
 }
 
 @Composable
@@ -233,10 +253,10 @@ private fun OpdsDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
 private fun BookRow(book: Book, open: (Book) -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable { open(book) },
-        shape = RoundedCornerShape(14.dp), color = Color.White.copy(alpha = .62f)
+        shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .72f)
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(width = 54.dp, height = 72.dp).background(Moss, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(width = 54.dp, height = 72.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
                 Text(book.format.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
             }
             Column(Modifier.padding(start = 14.dp).weight(1f)) {
@@ -282,11 +302,11 @@ private fun ReaderScreen(vm: ReaderViewModel) {
             }
         }
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize().background(Paper).verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 24.dp)) {
-            Text(vm.currentBook?.title ?: "阅读", style = MaterialTheme.typography.headlineMedium, color = Ink)
-            Text("${vm.currentBook?.format?.name} · 本地文件", color = Moss, modifier = Modifier.padding(top = 8.dp, bottom = 22.dp))
+        Column(Modifier.padding(padding).fillMaxSize().background(MaterialTheme.colorScheme.background).verticalScroll(rememberScrollState()).padding(horizontal = 28.dp, vertical = 24.dp)) {
+            Text(vm.currentBook?.title ?: "阅读", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
+            Text("${vm.currentBook?.format?.name} · 本地文件", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, bottom = 22.dp))
             vm.paragraphs.forEachIndexed { index, paragraph ->
-                Text(paragraph, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif), modifier = Modifier.fillMaxWidth().background(if (index == vm.currentParagraph && vm.speechState != SpeechState.IDLE) Highlight else Color.Transparent, RoundedCornerShape(8.dp)).clickable { vm.selectParagraph(index) }.padding(10.dp), color = Ink)
+                Text(paragraph, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif), modifier = Modifier.fillMaxWidth().background(if (index == vm.currentParagraph && vm.speechState != SpeechState.IDLE) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, RoundedCornerShape(8.dp)).clickable { vm.selectParagraph(index) }.padding(10.dp), color = MaterialTheme.colorScheme.onBackground)
                 Spacer(Modifier.height(8.dp))
             }
         }

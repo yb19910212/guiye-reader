@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import CoreFoundation
 
 @MainActor
 final class BookRepository: ObservableObject {
@@ -7,6 +8,7 @@ final class BookRepository: ObservableObject {
     @Published var lastError: String?
     @Published private(set) var importProgress: Double?
     @Published private(set) var importStatus: String?
+    @Published var importNotice: String?
     private let manager = FileManager.default
     private lazy var root = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("GuiyeReader", isDirectory: true)
     private var booksDirectory: URL { root.appendingPathComponent("Books", isDirectory: true) }
@@ -16,20 +18,38 @@ final class BookRepository: ObservableObject {
 
     func importFiles(_ urls: [URL]) {
         guard importProgress == nil, !urls.isEmpty else { return }
+        // Acquire security-scoped access before returning from the file importer callback.
+        // Cloud and third-party file providers may revoke their temporary grant immediately after it.
+        let scopedSources = urls.map { url in (url, url.startAccessingSecurityScopedResource()) }
         Task {
+            defer {
+                for (url, didStartAccess) in scopedSources where didStartAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
             lastError = nil
             var duplicates = 0
-            for (index, url) in urls.enumerated() {
-                importProgress = Double(index) / Double(urls.count)
-                importStatus = "正在导入 \(index + 1)/\(urls.count) · \(url.lastPathComponent)"
+            var imported = 0
+            var failures: [String] = []
+            for (index, source) in scopedSources.enumerated() {
+                let url = source.0
+                importProgress = Double(index) / Double(scopedSources.count)
+                importStatus = "正在导入 \(index + 1)/\(scopedSources.count) · \(url.lastPathComponent)"
                 do {
                     if try await importFile(url) { duplicates += 1 }
+                    else { imported += 1 }
                 } catch {
                     lastError = error.localizedDescription
+                    failures.append("\(url.lastPathComponent)：\(error.localizedDescription)")
                 }
             }
             importProgress = nil
-            importStatus = duplicates > 0 ? "导入完成，已跳过 \(duplicates) 本重复书籍" : "已导入 \(urls.count) 本书"
+            if failures.isEmpty {
+                importStatus = duplicates > 0 ? "已导入 \(imported) 本，跳过 \(duplicates) 本重复书籍" : "已成功导入 \(imported) 本书"
+            } else {
+                importStatus = "导入完成：成功 \(imported) 本，失败 \(failures.count) 本"
+            }
+            importNotice = failures.isEmpty ? importStatus : ([importStatus ?? "导入失败"] + failures).joined(separator: "\n")
         }
     }
 
@@ -37,9 +57,14 @@ final class BookRepository: ObservableObject {
         guard book.format == .txt, let data = try? Data(contentsOf: book.localURL) else {
             return [book.format == .epub ? "EPUB 已安全导入本地书库。Readium 导航器正在接入。" : "PDF 已安全导入本地书库。PDF 导航器正在接入。"]
         }
-        let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) ?? String(data: data, encoding: .isoLatin1) ?? "无法识别文本编码"
+        let gb18030 = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(kCFStringEncodingGB_18030_2000)))
+        let text = String(data: data, encoding: .utf8)
+            ?? String(data: data, encoding: .utf16)
+            ?? String(data: data, encoding: gb18030)
+            ?? String(data: data, encoding: .isoLatin1)
+            ?? "无法识别文本编码"
         let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
-        return normalized.components(separatedBy: "\n\n").map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return normalized.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
     func updateProgress(bookID: String, progress: Double) {
@@ -60,8 +85,6 @@ final class BookRepository: ObservableObject {
         try manager.createDirectory(at: booksDirectory, withIntermediateDirectories: true)
         let temporary = booksDirectory.appendingPathComponent("import-\(UUID().uuidString).\(format.rawValue)")
         let result = try await Task.detached { () -> (String, Int64) in
-            let access = source.startAccessingSecurityScopedResource()
-            defer { if access { source.stopAccessingSecurityScopedResource() } }
             let values = try source.resourceValues(forKeys: [.fileSizeKey])
             if let size = values.fileSize, size > 2_147_483_648 { throw ImportError.tooLarge }
             try FileManager.default.copyItem(at: source, to: temporary)

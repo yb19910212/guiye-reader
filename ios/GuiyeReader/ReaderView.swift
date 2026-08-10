@@ -1,12 +1,10 @@
 import SwiftUI
 
 struct ReaderView: View {
+    @EnvironmentObject private var theme: ThemeStore
     @StateObject private var model: ReaderViewModel
     private let bookID: String?
     private let onProgress: (Double) -> Void
-    private let paper = Color(red: 0.965, green: 0.953, blue: 0.918)
-    private let ink = Color(red: 0.118, green: 0.169, blue: 0.141)
-    private let moss = Color(red: 0.192, green: 0.373, blue: 0.286)
 
     init(book: Book? = nil, paragraphs: [String]? = nil, onProgress: @escaping (Double) -> Void = { _ in }) {
         let id = book?.id
@@ -23,20 +21,20 @@ struct ReaderView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(model.title)
                             .font(.largeTitle.weight(.semibold))
-                            .foregroundStyle(ink)
+                            .foregroundStyle(theme.palette.text)
                         Text("示例内容 · 自动识别中英文")
                             .font(.subheadline.weight(.medium))
-                            .foregroundStyle(moss)
+                            .foregroundStyle(theme.palette.accent)
                             .padding(.bottom, 10)
 
                         ForEach(Array(model.paragraphs.enumerated()), id: \.offset) { index, paragraph in
                             Text(paragraph)
                                 .font(.system(size: 20, design: .serif))
                                 .lineSpacing(9)
-                                .foregroundStyle(ink)
+                                .foregroundStyle(theme.palette.text)
                                 .padding(10)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(index == model.currentParagraph && model.playbackState != .idle ? moss.opacity(0.12) : .clear)
+                                .background(index == model.currentParagraph && model.playbackState != .idle ? theme.palette.highlight : .clear)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                                 .contentShape(Rectangle())
                                 .onTapGesture { model.move(to: index) }
@@ -51,12 +49,12 @@ struct ReaderView: View {
                     onProgress(model.paragraphs.count <= 1 ? 0 : Double(index) / Double(model.paragraphs.count - 1))
                 }
             }
-            .background(paper)
+            .background(theme.palette.background)
             .navigationTitle(model.title)
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { speechControls }
         }
-        .tint(moss)
+        .tint(theme.palette.accent)
     }
 
     private var speechControls: some View {
@@ -100,4 +98,4 @@ struct ReaderView: View {
     private var speedDisplay: Float { 0.6 + (model.rate - 0.35) / 0.30 }
 }
 
-#Preview { ReaderView() }
+#Preview { ReaderView().environmentObject(ThemeStore()) }

@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct LibraryView: View {
+    @EnvironmentObject private var theme: ThemeStore
     @StateObject private var repository = BookRepository()
     @State private var importing = false
     @State private var selectedBook: Book?
@@ -10,15 +11,15 @@ struct LibraryView: View {
     @State private var showsNotes = false
     @State private var showsAISettings = false
     @State private var showsOPDS = false
+    @State private var showsThemes = false
     @State private var exportsBackup = false
-    private let paper = Color(red: 0.965, green: 0.953, blue: 0.918)
-    private let moss = Color(red: 0.192, green: 0.373, blue: 0.286)
     private var epubType: UTType { UTType(filenameExtension: "epub") ?? .data }
+    private var txtType: UTType { UTType(filenameExtension: "txt") ?? .plainText }
 
     var body: some View {
         NavigationStack {
             Group { repository.books.isEmpty ? AnyView(emptyState) : AnyView(bookList) }
-                .background(paper)
+                .background(theme.palette.background)
                 .overlay(alignment: .top) {
                     if let progress = repository.importProgress {
                         VStack(spacing: 6) {
@@ -35,13 +36,17 @@ struct LibraryView: View {
                 .toolbar { ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { exportsBackup = true } label: { Label("备份", systemImage: "externaldrive") }
                     Button { showsAISettings = true } label: { Label("AI", systemImage: "sparkles") }
+                    Button { showsThemes = true } label: { Label("主题", systemImage: "paintpalette") }
                     Button { showsOPDS = true } label: { Label("OPDS", systemImage: "network") }
                     Button { showsNotes = true } label: { Label("笔记", systemImage: "note.text") }
                     Button("导入") { importing = true }
                 } }
-                .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .pdf, epubType], allowsMultipleSelection: true) { result in
+                .fileImporter(isPresented: $importing, allowedContentTypes: [txtType, .plainText, .text, .pdf, epubType], allowsMultipleSelection: true) { result in
                     switch result { case .success(let urls): repository.importFiles(urls); case .failure(let error): repository.lastError = error.localizedDescription }
                 }
+                .alert("导入结果", isPresented: Binding(get: { repository.importNotice != nil }, set: { if !$0 { repository.importNotice = nil } })) {
+                    Button("知道了") { repository.importNotice = nil }
+                } message: { Text(repository.importNotice ?? "") }
                 .navigationDestination(item: $selectedBook) { book in
                     if book.format == .pdf {
                         PDFReaderView(book: book) { repository.updateProgress(bookID: book.id, progress: $0) }
@@ -53,11 +58,12 @@ struct LibraryView: View {
                 }
                 .sheet(isPresented: $showsNotes) { NotesView(books: repository.books) }
                 .sheet(isPresented: $showsAISettings) { AISettingsView() }
+                .sheet(isPresented: $showsThemes) { ThemeSettingsView().environmentObject(theme) }
                 .sheet(isPresented: $showsOPDS) { OPDSCatalogView(repository: repository) }
                 .fileExporter(isPresented: $exportsBackup, document: LibraryBackupDocument(data: repository.backupData()), contentType: .json, defaultFilename: "GuiyeReader-Backup") { result in
                     if case .failure(let error) = result { repository.lastError = error.localizedDescription }
                 }
-        }.tint(moss)
+        }.tint(theme.palette.accent)
     }
 
     private var emptyState: some View {
@@ -74,7 +80,7 @@ struct LibraryView: View {
                 ForEach(filteredBooks) { book in
                     Button { selectedBook = book } label: {
                         HStack(spacing: 14) {
-                            RoundedRectangle(cornerRadius: 6).fill(moss).frame(width: 52, height: 70).overlay(Text(book.format.rawValue.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.white))
+                            RoundedRectangle(cornerRadius: 6).fill(theme.palette.accent).frame(width: 52, height: 70).overlay(Text(book.format.rawValue.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.white))
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(book.title).font(.headline).foregroundStyle(.primary)
                                 Text("\(book.format.rawValue.uppercased()) · \(ByteCountFormatter.string(fromByteCount: book.fileSize, countStyle: .file))").font(.subheadline).foregroundStyle(.secondary)
@@ -106,4 +112,4 @@ private enum LibraryFilter: CaseIterable { case all, reading, unread, finished
     var title: String { switch self { case .all: "全部"; case .reading: "在读"; case .unread: "未读"; case .finished: "读完" } }
 }
 
-#Preview { LibraryView() }
+#Preview { LibraryView().environmentObject(ThemeStore()) }
