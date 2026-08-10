@@ -1,5 +1,8 @@
 name: Mobile CI
 
+permissions:
+  contents: write
+
 on:
   push:
     branches: [main, "codex/**"]
@@ -53,3 +56,32 @@ jobs:
         with:
           name: GuiyeReader-ios-unsigned
           path: ios/GuiyeReader-unsigned.ipa
+
+  release:
+    if: github.event_name == 'push'
+    needs: [android, ios]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: GuiyeReader-android-debug
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: GuiyeReader-ios-unsigned
+          path: release
+      - name: Prepare release files
+        run: mv release/app-debug.apk release/GuiyeReader-android.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Guiye Reader Build ${{ github.run_number }}
+          generate_release_notes: true
+          body: |
+            自动构建版本。
+
+            - `GuiyeReader-android.apk`：Android Debug 签名安装包
+            - `GuiyeReader-unsigned.ipa`：iOS 未签名安装包，需要自行签名
+          files: |
+            release/GuiyeReader-android.apk
+            release/GuiyeReader-unsigned.ipa
