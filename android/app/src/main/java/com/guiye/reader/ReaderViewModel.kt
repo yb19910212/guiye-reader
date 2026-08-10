@@ -22,6 +22,9 @@ import kotlinx.coroutines.withContext
 import com.guiye.reader.opds.OpdsCatalog
 import com.guiye.reader.opds.OpdsEntry
 import com.guiye.reader.opds.OpdsPage
+import com.guiye.reader.remote.WebDavClient
+import com.guiye.reader.remote.WebDavItem
+import androidx.documentfile.provider.DocumentFile
 
 data class ImportUiState(
     val current: Int = 0,
@@ -43,6 +46,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     )
     private val repository = BookRepository(application)
     private val opdsCatalog = OpdsCatalog(application)
+    private val webDavClient = WebDavClient(application)
     private val positionPrefs = application.getSharedPreferences("guiye_positions", android.content.Context.MODE_PRIVATE)
     var books by mutableStateOf(repository.allBooks())
     var currentBook by mutableStateOf<Book?>(null)
@@ -95,6 +99,42 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 importError = if (duplicateCount > 0) "导入完成，已跳过 $duplicateCount 本重复书籍" else "已导入 ${uris.size} 本书"
             }
             latestBook?.let(::openBook)
+        }
+    }
+
+    fun importFolder(treeUri: android.net.Uri) {
+        val root = DocumentFile.fromTreeUri(getApplication(), treeUri)
+        if (root == null) { importError = "无法打开所选网络文件夹"; return }
+        viewModelScope.launch(Dispatchers.IO) {
+            val uris = mutableListOf<android.net.Uri>()
+            fun visit(node: DocumentFile) {
+                if (uris.size >= 1_000) return
+                if (node.isDirectory) node.listFiles().forEach(::visit)
+                else if (node.name?.substringAfterLast('.', "")?.lowercase() in setOf("epub", "pdf", "txt")) uris += node.uri
+            }
+            visit(root)
+            withContext(Dispatchers.Main) {
+                if (uris.isEmpty()) importError = "文件夹中没有 EPUB、PDF 或 TXT" else importBooks(uris)
+            }
+        }
+    }
+
+    suspend fun loadWebDav(url: String, username: String, password: String): Result<List<WebDavItem>> = webDavClient.list(url, username, password)
+
+    fun importWebDav(items: List<WebDavItem>, username: String, password: String, completed: (String) -> Unit) {
+        viewModelScope.launch {
+            var imported = 0
+            val failures = mutableListOf<String>()
+            items.forEach { item ->
+                webDavClient.download(item, username, password).fold(
+                    onSuccess = { file ->
+                        withContext(Dispatchers.IO) { repository.import(file) }.onSuccess { imported++; books = repository.allBooks() }.onFailure { failures += "${item.name}：${it.message}" }
+                        file.delete()
+                    },
+                    onFailure = { failures += "${item.name}：${it.message}" }
+                )
+            }
+            completed(if (failures.isEmpty()) "已导入 $imported 本书" else "导入 $imported 本，失败 ${failures.size} 本\n${failures.joinToString("\n")}")
         }
     }
 

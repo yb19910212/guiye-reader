@@ -100,11 +100,18 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     var showsNotes by remember { mutableStateOf(false) }
     var showsAISettings by remember { mutableStateOf(false) }
     var showsOpds by remember { mutableStateOf(false) }
+    var showsRemote by remember { mutableStateOf(false) }
     var showsThemes by remember { mutableStateOf(false) }
     var searchText by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("all") }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.importBooks(uris)
+    }
+    val folderImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let {
+            runCatching { context.contentResolver.takePersistableUriPermission(it, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            vm.importFolder(it)
+        }
     }
     Scaffold(
         topBar = { TopAppBar(title = { Text("归页") }, actions = {
@@ -115,6 +122,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
             TextButton(onClick = { showsAISettings = true }) { Text("AI") }
             TextButton(onClick = { showsThemes = true }) { Text("主题") }
             TextButton(onClick = { showsOpds = true }) { Text("OPDS") }
+            TextButton(onClick = { showsRemote = true }) { Text("网络") }
             TextButton(onClick = { showsNotes = true }) { Text("笔记") }
             TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
         }) },
@@ -188,6 +196,9 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     }
     if (showsOpds) {
         OpdsDialog(vm) { showsOpds = false }
+    }
+    if (showsRemote) {
+        RemoteLibraryDialog(vm, openSmbFolder = { folderImporter.launch(null) }) { showsRemote = false }
     }
     if (showsThemes) {
         AlertDialog(onDismissRequest = { showsThemes = false }, title = { Text("外观主题") }, text = {

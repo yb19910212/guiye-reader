@@ -11,6 +11,7 @@ struct LibraryView: View {
     @State private var showsNotes = false
     @State private var showsAISettings = false
     @State private var showsOPDS = false
+    @State private var showsRemoteLibrary = false
     @State private var showsThemes = false
     @State private var exportsBackup = false
     private var epubType: UTType { UTType(filenameExtension: "epub") ?? .data }
@@ -37,16 +38,14 @@ struct LibraryView: View {
                     Button { exportsBackup = true } label: { Label("备份", systemImage: "externaldrive") }
                     Button { showsAISettings = true } label: { Label("AI", systemImage: "sparkles") }
                     Button { showsThemes = true } label: { Label("主题", systemImage: "paintpalette") }
-                    Button { showsOPDS = true } label: { Label("OPDS", systemImage: "network") }
+                    Menu {
+                        Button { importing = true } label: { Label("本机 / iCloud / SMB", systemImage: "folder") }
+                        Button { showsRemoteLibrary = true } label: { Label("WebDAV / SMB 文件夹", systemImage: "externaldrive.connected.to.line.below") }
+                        Button { showsOPDS = true } label: { Label("OPDS 书库", systemImage: "books.vertical") }
+                    } label: { Label("网络", systemImage: "network") }
                     Button { showsNotes = true } label: { Label("笔记", systemImage: "note.text") }
                     Button("导入") { importing = true }
                 } }
-                .fileImporter(isPresented: $importing, allowedContentTypes: [txtType, .plainText, .text, .pdf, epubType], allowsMultipleSelection: true) { result in
-                    switch result { case .success(let urls): repository.importFiles(urls); case .failure(let error): repository.lastError = error.localizedDescription }
-                }
-                .alert("导入结果", isPresented: Binding(get: { repository.importNotice != nil }, set: { if !$0 { repository.importNotice = nil } })) {
-                    Button("知道了") { repository.importNotice = nil }
-                } message: { Text(repository.importNotice ?? "") }
                 .navigationDestination(item: $selectedBook) { book in
                     if book.format == .pdf {
                         PDFReaderView(book: book) { repository.updateProgress(bookID: book.id, progress: $0) }
@@ -60,10 +59,25 @@ struct LibraryView: View {
                 .sheet(isPresented: $showsAISettings) { AISettingsView() }
                 .sheet(isPresented: $showsThemes) { ThemeSettingsView().environmentObject(theme) }
                 .sheet(isPresented: $showsOPDS) { OPDSCatalogView(repository: repository) }
+                .sheet(isPresented: $showsRemoteLibrary) { RemoteLibraryView(repository: repository) }
                 .fileExporter(isPresented: $exportsBackup, document: LibraryBackupDocument(data: repository.backupData()), contentType: .json, defaultFilename: "GuiyeReader-Backup") { result in
                     if case .failure(let error) = result { repository.lastError = error.localizedDescription }
                 }
-        }.tint(theme.palette.accent)
+        }
+        .tint(theme.palette.accent)
+        .sheet(isPresented: $importing) {
+            DocumentPicker(contentTypes: [txtType, .plainText, .text, .pdf, epubType], onPicked: { urls in
+                importing = false
+                repository.importFiles(urls)
+            }, onFailure: { error in
+                importing = false
+                repository.lastError = error.localizedDescription
+                repository.importNotice = error.localizedDescription
+            })
+        }
+        .alert("导入结果", isPresented: Binding(get: { repository.importNotice != nil }, set: { if !$0 { repository.importNotice = nil } })) {
+            Button("知道了") { repository.importNotice = nil }
+        } message: { Text(repository.importNotice ?? "") }
     }
 
     private var emptyState: some View {
