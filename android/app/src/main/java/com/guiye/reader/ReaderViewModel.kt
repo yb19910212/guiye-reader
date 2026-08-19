@@ -19,6 +19,8 @@ import com.guiye.reader.speech.detectLanguage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import com.guiye.reader.opds.OpdsCatalog
 import com.guiye.reader.opds.OpdsEntry
 import com.guiye.reader.opds.OpdsPage
@@ -62,6 +64,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var rate by mutableFloatStateOf(1f)
     var voices by mutableStateOf<List<SpeechVoice>>(emptyList())
     var selectedVoiceId by mutableStateOf<String?>(null)
+    private var textPositionSaveJob: Job? = null
 
     private val engine: AndroidTtsEngine by lazy {
         AndroidTtsEngine(
@@ -157,21 +160,44 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun closeBook() { stopSpeech(); currentBook = null; paragraphs = sampleParagraphs }
+    fun closeBook() { flushTextPosition(); stopSpeech(); currentBook = null; paragraphs = sampleParagraphs }
     private fun stopSpeech() { engine.stop(); speechState = SpeechState.IDLE }
 
     fun selectParagraph(index: Int) {
         currentParagraph = index.coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
-        currentBook?.let { book ->
-            positionPrefs.edit().putInt("text.${book.id}", currentParagraph).apply()
+        scheduleTextPositionSave()
+    }
+
+    fun recordTextScrollPosition(index: Int) {
+        if (currentBook?.format != BookFormat.TXT || paragraphs.firstOrNull() == "正在载入正文…") return
+        currentParagraph = index.coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
+        scheduleTextPositionSave()
+    }
+
+    fun flushTextPosition() {
+        val book = currentBook?.takeIf { it.format == BookFormat.TXT } ?: return
+        textPositionSaveJob?.cancel()
+        positionPrefs.edit().putInt("text.${book.id}", currentParagraph).commit()
+        val progress = if (paragraphs.size <= 1) 0f else currentParagraph.toFloat() / (paragraphs.size - 1)
+        repository.updateProgress(book.id, progress)
+        books = repository.allBooks()
+    }
+
+    private fun scheduleTextPositionSave() {
+        val book = currentBook?.takeIf { it.format == BookFormat.TXT } ?: return
+        positionPrefs.edit().putInt("text.${book.id}", currentParagraph).apply()
+        textPositionSaveJob?.cancel()
+        textPositionSaveJob = viewModelScope.launch {
+            delay(350)
             val progress = if (paragraphs.size <= 1) 0f else currentParagraph.toFloat() / (paragraphs.size - 1)
-            repository.updateProgress(book.id, progress); books = repository.allBooks()
+            repository.updateProgress(book.id, progress)
+            books = repository.allBooks()
         }
     }
 
     fun pdfPage(book: Book): Int = positionPrefs.getInt("pdf.${book.id}", 0)
     fun savePdfPage(book: Book, page: Int, pageCount: Int) {
-        positionPrefs.edit().putInt("pdf.${book.id}", page).apply()
+        positionPrefs.edit().putInt("pdf.${book.id}", page).commit()
         repository.updateProgress(book.id, if (pageCount <= 1) 0f else page.toFloat() / (pageCount - 1)); books = repository.allBooks()
     }
 
@@ -221,5 +247,5 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private fun restartIfActive() {
         if (speechState != SpeechState.IDLE) { engine.speak(segments, currentParagraph, selectedVoiceId, rate); speechState = SpeechState.PLAYING }
     }
-    override fun onCleared() { engine.shutdown() }
+    override fun onCleared() { flushTextPosition(); engine.shutdown() }
 }

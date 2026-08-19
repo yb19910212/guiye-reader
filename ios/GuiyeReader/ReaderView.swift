@@ -7,6 +7,10 @@ struct ReaderView: View {
     private let onProgress: (Double) -> Void
     private let loadParagraphs: (() async -> [String])?
     @State private var showsVoiceLibrary = false
+    @State private var visibleParagraph: Int?
+    @State private var progressSaveTask: Task<Void, Never>?
+    @State private var isRecordingScroll = false
+    @Environment(\.scenePhase) private var scenePhase
 
     init(book: Book? = nil, paragraphs: [String]? = nil, loadParagraphs: (() async -> [String])? = nil, onProgress: @escaping (Double) -> Void = { _ in }) {
         let id = book?.id
@@ -14,6 +18,7 @@ struct ReaderView: View {
         self.onProgress = onProgress
         self.loadParagraphs = loadParagraphs
         let start = id.map { UserDefaults.standard.integer(forKey: "text.\($0)") } ?? 0
+        _visibleParagraph = State(initialValue: start)
         _model = StateObject(wrappedValue: ReaderViewModel(title: book?.title ?? "为什么阅读需要一个闭环", paragraphs: paragraphs ?? (loadParagraphs == nil ? ReaderViewModel.sampleParagraphs : ["正在载入正文…"]), startIndex: start))
     }
 
@@ -44,12 +49,22 @@ struct ReaderView: View {
                                 .id(index)
                         }
                     }
+                    .scrollTargetLayout()
                     .padding(24)
                 }
+                .scrollPosition(id: $visibleParagraph, anchor: .top)
+                .onChange(of: visibleParagraph) { _, index in
+                    guard let index, model.paragraphs.indices.contains(index) else { return }
+                    isRecordingScroll = true
+                    model.recordReadingPosition(index)
+                    Task { @MainActor in
+                        await Task.yield()
+                        isRecordingScroll = false
+                    }
+                }
                 .onChange(of: model.currentParagraph) { _, index in
-                    withAnimation { proxy.scrollTo(index, anchor: .center) }
-                    if let bookID { UserDefaults.standard.set(index, forKey: "text.\(bookID)") }
-                    onProgress(model.paragraphs.count <= 1 ? 0 : Double(index) / Double(model.paragraphs.count - 1))
+                    if !isRecordingScroll { withAnimation { proxy.scrollTo(index, anchor: .center) } }
+                    schedulePositionSave(index)
                 }
             }
             .background(theme.palette.background)
@@ -57,10 +72,18 @@ struct ReaderView: View {
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { speechControls }
             .task(id: bookID) {
-                if let loadParagraphs { model.replaceParagraphs(await loadParagraphs()) }
+                if let loadParagraphs {
+                    model.replaceParagraphs(await loadParagraphs())
+                    visibleParagraph = model.currentParagraph
+                    proxy.scrollTo(model.currentParagraph, anchor: .top)
+                }
             }
         }
         .tint(theme.palette.accent)
+        .onDisappear { persistPositionImmediately() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { persistPositionImmediately() }
+        }
     }
 
     private var speechControls: some View {
@@ -98,6 +121,29 @@ struct ReaderView: View {
         model.voices.first(where: { $0.id == model.selectedVoiceID })?.name ?? "自动音色"
     }
     private var speedDisplay: Float { 0.6 + (model.rate - 0.35) / 0.30 }
+
+    private func schedulePositionSave(_ index: Int) {
+        guard let bookID else { return }
+        UserDefaults.standard.set(index, forKey: "text.\(bookID)")
+        progressSaveTask?.cancel()
+        progressSaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            onProgress(progress(for: index))
+        }
+    }
+
+    private func persistPositionImmediately() {
+        guard let bookID else { return }
+        progressSaveTask?.cancel()
+        let index = model.currentParagraph
+        UserDefaults.standard.set(index, forKey: "text.\(bookID)")
+        onProgress(progress(for: index))
+    }
+
+    private func progress(for index: Int) -> Double {
+        model.paragraphs.count <= 1 ? 0 : Double(index) / Double(model.paragraphs.count - 1)
+    }
 }
 
 private struct VoiceLibraryView: View {

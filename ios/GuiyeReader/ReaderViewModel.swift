@@ -48,6 +48,9 @@ final class ReaderViewModel: ObservableObject {
     func previous() { move(to: max(0, currentParagraph - 1)) }
     func next() { move(to: min(paragraphs.count - 1, currentParagraph + 1)) }
     func move(to index: Int) { currentParagraph = index; restartIfActive() }
+    func recordReadingPosition(_ index: Int) {
+        currentParagraph = min(max(0, index), paragraphs.count - 1)
+    }
     func chooseVoice(_ id: String?) { selectedVoiceID = id; restartIfActive() }
     func previewVoice(_ voice: SpeechVoice) {
         selectedVoiceID = voice.id

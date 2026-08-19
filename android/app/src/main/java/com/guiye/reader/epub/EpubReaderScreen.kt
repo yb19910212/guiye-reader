@@ -104,7 +104,7 @@ fun EpubReaderScreen(book: Book, onClose: () -> Unit, onProgress: (Book, Float) 
 
     LaunchedEffect(navigator) {
         navigator?.currentLocator?.collectLatest { locator ->
-            prefs.edit().putString("epub.${book.id}", locator.toJSON().toString()).apply()
+            prefs.edit().putString("epub.${book.id}", locator.toJSON().toString()).commit()
             currentLocator = locator.toJSON().toString()
             onProgress(book, (locator.locations.totalProgression ?: 0.0).toFloat())
         }

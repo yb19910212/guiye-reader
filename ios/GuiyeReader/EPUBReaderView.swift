@@ -42,6 +42,7 @@ struct EPUBReaderView: View {
     @AppStorage("reader.paragraphSpacing") private var paragraphSpacing = 0.5
     @AppStorage("reader.scroll") private var scroll = false
     @AppStorage("reader.theme") private var theme = "light"
+    @Environment(\.scenePhase) private var scenePhase
 
     init(book: Book, onProgress: @escaping (Double) -> Void = { _ in }) {
         self.book = book
@@ -98,6 +99,10 @@ struct EPUBReaderView: View {
             .overlay {
                 if bridge.navigator == nil && bridge.error == nil { ProgressView("正在打开 EPUB…") }
                 if let error = bridge.error { ContentUnavailableView("无法打开 EPUB", systemImage: "exclamationmark.triangle", description: Text(error)) }
+            }
+            .onDisappear { bridge.navigator?.persistReadingPosition(book: book, onProgress: onProgress) }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { bridge.navigator?.persistReadingPosition(book: book, onProgress: onProgress) }
             }
     }
 
@@ -211,6 +216,14 @@ private final class HighlightHostViewController: UIViewController {
 
 @MainActor
 private extension EPUBNavigatorViewController {
+    func persistReadingPosition(book: Book, onProgress: (Double) -> Void) {
+        Task { @MainActor in
+            guard let locator = currentLocation else { return }
+            UserDefaults.standard.set(try? locator.jsonString(), forKey: "epub.\(book.id)")
+            onProgress(locator.locations.totalProgression ?? 0)
+        }
+    }
+
     func reloadHighlights(for book: Book) {
         let decorations = NoteStore().notes.filter { $0.bookID == book.id && $0.quote != nil }.compactMap { note -> Decoration? in
             guard let value = note.locator,

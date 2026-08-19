@@ -13,11 +13,13 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,6 +27,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.fragment.app.FragmentActivity
 import com.guiye.reader.epub.EpubReaderScreen
 import com.guiye.reader.library.Book
@@ -33,6 +38,9 @@ import com.guiye.reader.pdf.PdfPageView
 import com.guiye.reader.notes.NoteRepository
 import com.guiye.reader.speech.SpeechState
 import com.guiye.reader.opds.OpdsPage
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 private enum class ReaderTheme(val title: String) {
     PAPER("纸张"), SEPIA("暖棕"), FOREST("森林"), NIGHT("夜间");
@@ -291,6 +299,31 @@ private fun formatBytes(bytes: Long): String = when {
 @Composable
 private fun ReaderScreen(vm: ReaderViewModel) {
     var showsVoiceLibrary by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val bookId = vm.currentBook?.id
+
+    LaunchedEffect(bookId, vm.paragraphs.size) {
+        if (bookId == null || vm.paragraphs.firstOrNull() == "正在载入正文…") return@LaunchedEffect
+        listState.scrollToItem((vm.currentParagraph + 1).coerceAtMost(vm.paragraphs.size))
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .distinctUntilChanged()
+            .collectLatest { visibleItem ->
+                delay(250)
+                vm.recordTextScrollPosition((visibleItem - 1).coerceAtLeast(0))
+            }
+    }
+
+    DisposableEffect(lifecycleOwner, bookId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) vm.flushTextPosition()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            vm.flushTextPosition()
+        }
+    }
     Scaffold(
         topBar = { TopAppBar(title = { Text(vm.currentBook?.title ?: "阅读") }, navigationIcon = { TextButton(onClick = vm::closeBook) { Text("‹ 书库") } }, actions = { Text("Aa", modifier = Modifier.padding(16.dp)) }) },
         bottomBar = {
@@ -310,7 +343,7 @@ private fun ReaderScreen(vm: ReaderViewModel) {
             }
         }
     ) { padding ->
-        LazyColumn(Modifier.padding(padding).fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 28.dp), contentPadding = PaddingValues(vertical = 24.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.padding(padding).fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 28.dp), contentPadding = PaddingValues(vertical = 24.dp)) {
             item {
                 Text(vm.currentBook?.title ?: "阅读", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
                 Text("${vm.currentBook?.format?.name} · 本地文件", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, bottom = 22.dp))
