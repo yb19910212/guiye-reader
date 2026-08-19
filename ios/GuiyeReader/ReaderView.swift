@@ -66,18 +66,18 @@ struct ReaderView: View {
                     if !isRecordingScroll { withAnimation { proxy.scrollTo(index, anchor: .center) } }
                     schedulePositionSave(index)
                 }
+                .task(id: bookID) {
+                    if let loadParagraphs {
+                        model.replaceParagraphs(await loadParagraphs())
+                        visibleParagraph = model.currentParagraph
+                        proxy.scrollTo(model.currentParagraph, anchor: .top)
+                    }
+                }
             }
             .background(theme.palette.background)
             .navigationTitle(model.title)
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) { speechControls }
-            .task(id: bookID) {
-                if let loadParagraphs {
-                    model.replaceParagraphs(await loadParagraphs())
-                    visibleParagraph = model.currentParagraph
-                    proxy.scrollTo(model.currentParagraph, anchor: .top)
-                }
-            }
         }
         .tint(theme.palette.accent)
         .onDisappear { persistPositionImmediately() }
@@ -223,3 +223,4 @@ private struct VoiceGroup: Identifiable {
 }
 
 #Preview { ReaderView().environmentObject(ThemeStore()) }
+
