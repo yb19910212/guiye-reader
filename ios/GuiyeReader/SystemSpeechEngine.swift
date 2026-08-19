@@ -26,7 +26,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 case .enhanced: quality = "增强"
                 default: quality = "标准"
                 }
-                SpeechVoice(
+                return SpeechVoice(
                     id: $0.identifier,
                     name: $0.name,
                     languageTag: $0.language,

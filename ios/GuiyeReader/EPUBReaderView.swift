@@ -217,11 +217,9 @@ private final class HighlightHostViewController: UIViewController {
 @MainActor
 private extension EPUBNavigatorViewController {
     func persistReadingPosition(book: Book, onProgress: (Double) -> Void) {
-        Task { @MainActor in
-            guard let locator = currentLocation else { return }
-            UserDefaults.standard.set(try? locator.jsonString(), forKey: "epub.\(book.id)")
-            onProgress(locator.locations.totalProgression ?? 0)
-        }
+        guard let locator = currentLocation else { return }
+        UserDefaults.standard.set(try? locator.jsonString(), forKey: "epub.\(book.id)")
+        onProgress(locator.locations.totalProgression ?? 0)
     }
 
     func reloadHighlights(for book: Book) {
