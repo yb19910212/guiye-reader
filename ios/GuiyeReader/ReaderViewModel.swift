@@ -44,9 +44,12 @@ final class ReaderViewModel: ObservableObject {
     func search(_ query: String, limit: Int = 100) -> [TXTSearchResult] {
         let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return [] }
-        return paragraphs.enumerated().lazy.compactMap { index, paragraph in
-            paragraph.localizedCaseInsensitiveContains(value) ? TXTSearchResult(index: index, text: paragraph) : nil
-        }.prefix(limit).map { $0 }
+        var results: [TXTSearchResult] = []
+        for (index, paragraph) in paragraphs.enumerated() where paragraph.localizedCaseInsensitiveContains(value) {
+            results.append(TXTSearchResult(index: index, text: paragraph))
+            if results.count == limit { break }
+        }
+        return results
     }
 
     func playOrPause() {
