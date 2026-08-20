@@ -23,9 +23,10 @@ final class ReaderViewModel: ObservableObject {
     private var segments: [SpeechSegment] { paragraphs.enumerated().map { SpeechSegment(id: $0.offset, text: $0.element, languageTag: detectedLanguage(for: $0.element)) } }
 
     init(title: String = "为什么阅读需要一个闭环", paragraphs: [String] = ReaderViewModel.sampleParagraphs, startIndex: Int = 0, engine: SystemSpeechEngine = SystemSpeechEngine()) {
+        let normalizedParagraphs = paragraphs.isEmpty ? ["文件内容为空"] : paragraphs
         self.title = title
-        self.paragraphs = paragraphs.isEmpty ? ["文件内容为空"] : paragraphs
-        self.chapters = TXTParser.chapters(in: self.paragraphs)
+        self.paragraphs = normalizedParagraphs
+        self.chapters = TXTParser.chapters(in: normalizedParagraphs)
         self.engine = engine
         self.requestedStartIndex = startIndex
         self.currentParagraph = min(max(0, startIndex), self.paragraphs.count - 1)
