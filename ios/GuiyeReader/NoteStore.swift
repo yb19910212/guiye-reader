@@ -190,3 +190,39 @@ final class ReadingStatsStore: ObservableObject {
     }
 }
 
+struct ReadingPlan: Identifiable, Codable, Hashable {
+    let bookID: String
+    let bookTitle: String
+    let createdAt: Date
+    let deadline: Date
+    var id: String { bookID }
+}
+
+@MainActor
+final class ReadingPlanStore: ObservableObject {
+    @Published private(set) var plans: [ReadingPlan] = []
+    private let key = "guiye.readingPlans"
+
+    init() {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return }
+        plans = (try? JSONDecoder().decode([ReadingPlan].self, from: data)) ?? []
+    }
+
+    func set(book: Book, days: Int) {
+        let deadline = Calendar.current.date(byAdding: .day, value: max(days, 1), to: Date()) ?? Date()
+        plans.removeAll { $0.bookID == book.id }
+        plans.append(ReadingPlan(bookID: book.id, bookTitle: book.title, createdAt: Date(), deadline: deadline))
+        persist()
+    }
+    func remove(bookID: String) { plans.removeAll { $0.bookID == bookID }; persist() }
+    func merge(_ imported: [ReadingPlan]) {
+        imported.forEach { plan in
+            if let index = plans.firstIndex(where: { $0.bookID == plan.bookID }) {
+                if plan.deadline > plans[index].deadline { plans[index] = plan }
+            } else { plans.append(plan) }
+        }
+        persist()
+    }
+    private func persist() { UserDefaults.standard.set(try? JSONEncoder().encode(plans), forKey: key) }
+}
+

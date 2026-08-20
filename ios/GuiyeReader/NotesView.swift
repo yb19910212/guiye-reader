@@ -121,3 +121,48 @@ struct ReadingStatsView: View {
     }
 }
 
+struct ReadingPlansView: View {
+    let books: [Book]
+    @StateObject private var store = ReadingPlanStore()
+    @State private var selectedBookID = ""
+    @State private var days = 30
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("新建计划") {
+                    Picker("书籍", selection: $selectedBookID) { ForEach(books) { Text($0.title).tag($0.id) } }
+                    Picker("完成期限", selection: $days) { ForEach([7, 14, 30, 60], id: \.self) { Text("\($0) 天").tag($0) } }.pickerStyle(.segmented)
+                    Button("开始读完计划") {
+                        if let book = books.first(where: { $0.id == selectedBookID }) { store.set(book: book, days: days) }
+                    }.disabled(selectedBookID.isEmpty)
+                }
+                Section("进行中的计划") {
+                    if activePlans.isEmpty { Text("还没有读完计划").foregroundStyle(.secondary) }
+                    ForEach(activePlans) { plan in
+                        let progress = books.first(where: { $0.id == plan.bookID })?.progress ?? 0
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack { Text(plan.bookTitle).font(.headline); Spacer(); Text("\(Int(progress * 100))%").monospacedDigit() }
+                            ProgressView(value: progress)
+                            Text(planSummary(plan, progress: progress)).font(.caption).foregroundStyle(progress >= 0.98 ? Color.green : Color.secondary)
+                        }.swipeActions { Button("删除", role: .destructive) { store.remove(bookID: plan.bookID) } }
+                    }
+                }
+            }
+            .navigationTitle("读完计划")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .onAppear { if selectedBookID.isEmpty { selectedBookID = books.first?.id ?? "" } }
+        }
+    }
+
+    private var activePlans: [ReadingPlan] { store.plans.sorted { $0.deadline < $1.deadline } }
+    private func planSummary(_ plan: ReadingPlan, progress: Double) -> String {
+        if progress >= 0.98 { return "已完成计划" }
+        let remaining = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()), to: Calendar.current.startOfDay(for: plan.deadline)).day ?? 0
+        if remaining < 0 { return "已逾期 \(-remaining) 天 · 剩余 \(Int((1 - progress) * 100))%" }
+        let daily = (1 - progress) / Double(max(remaining + 1, 1)) * 100
+        return "截止 \(plan.deadline.formatted(date: .abbreviated, time: .omitted)) · 每天至少 \(String(format: "%.1f", daily))%"
+    }
+}
+

@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import com.guiye.reader.stats.ReadingStatsRepository
+import com.guiye.reader.plans.ReadingPlanRepository
 
 private enum class ReaderTheme(val title: String) {
     PAPER("纸张"), SEPIA("暖棕"), FOREST("森林"), NIGHT("夜间");
@@ -125,6 +126,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     val context = androidx.compose.ui.platform.LocalContext.current
     val notes = remember { NoteRepository(context) }
     val readingStats = remember { ReadingStatsRepository(context) }
+    val readingPlans = remember { ReadingPlanRepository(context) }
     var showsNotes by remember { mutableStateOf(false) }
     var noteSearch by remember { mutableStateOf("") }
     var noteVersion by remember { mutableIntStateOf(0) }
@@ -138,6 +140,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     var showsThemes by remember { mutableStateOf(false) }
     var showsHistory by remember { mutableStateOf(false) }
     var showsStats by remember { mutableStateOf(false) }
+    var showsPlans by remember { mutableStateOf(false) }
     var editingBook by remember { mutableStateOf<Book?>(null) }
     var deletingBook by remember { mutableStateOf<Book?>(null) }
     var managing by remember { mutableStateOf(false) }
@@ -168,6 +171,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
             TextButton(onClick = { showsNotes = true }) { Text("笔记") }
             TextButton(onClick = { showsHistory = true }) { Text("历史") }
             TextButton(onClick = { showsStats = true }) { Text("统计") }
+            TextButton(onClick = { showsPlans = true }) { Text("计划") }
             TextButton(onClick = { managing = !managing; if (!managing) selectedIds = emptySet() }) { Text(if (managing) "完成" else "管理") }
             TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
         }) },
@@ -252,6 +256,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
         )
     }
     if (showsStats) ReadingStatsDialog(readingStats) { showsStats = false }
+    if (showsPlans) ReadingPlansDialog(readingPlans, vm.books) { showsPlans = false }
     editingNote?.let { note ->
         AlertDialog(
             onDismissRequest = { editingNote = null },
@@ -454,6 +459,48 @@ private fun ReadingStatsDialog(repository: ReadingStatsRepository, dismiss: () -
         } },
         confirmButton = { Button(onClick = { repository.setGoalMinutes(goal); dismiss() }) { Text("保存") } },
         dismissButton = { TextButton(onClick = dismiss) { Text("关闭") } }
+    )
+}
+
+@Composable
+private fun ReadingPlansDialog(repository: ReadingPlanRepository, books: List<Book>, dismiss: () -> Unit) {
+    var selectedIndex by remember { mutableIntStateOf(0) }
+    var days by remember { mutableIntStateOf(30) }
+    var version by remember { mutableIntStateOf(0) }
+    val plans = remember(version) { repository.all() }
+    val dateFormat = remember { java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM) }
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("读完计划") },
+        text = { Column(Modifier.fillMaxWidth().heightIn(max = 580.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (books.isNotEmpty()) {
+                TextButton(onClick = { selectedIndex = (selectedIndex + 1) % books.size }, modifier = Modifier.fillMaxWidth()) {
+                    Text("书籍：${books[selectedIndex.coerceIn(0, books.lastIndex)].title}（点击切换）", modifier = Modifier.fillMaxWidth())
+                }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(7, 14, 30, 60).forEach { value -> FilterChip(selected = days == value, onClick = { days = value }, label = { Text("$value 天") }) }
+                }
+                Button(onClick = { repository.set(books[selectedIndex.coerceIn(0, books.lastIndex)], days); version++ }, modifier = Modifier.fillMaxWidth()) { Text("开始读完计划") }
+            }
+            HorizontalDivider()
+            if (plans.isEmpty()) Text("还没有读完计划", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            plans.forEach { plan ->
+                val progress = books.firstOrNull { it.id == plan.bookId }?.progress ?: 0f
+                val remainingDays = kotlin.math.ceil((plan.deadline - System.currentTimeMillis()) / 86_400_000.0).toInt()
+                val daily = (1f - progress).coerceAtLeast(0f) / remainingDays.coerceAtLeast(1) * 100
+                Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)).padding(12.dp)) {
+                    Row { Text(plan.bookTitle, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f)); Text("${(progress * 100).toInt()}%") }
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp))
+                    Text(when {
+                        progress >= .98f -> "已完成计划"
+                        remainingDays < 0 -> "已逾期 ${-remainingDays} 天"
+                        else -> "截止 ${dateFormat.format(java.util.Date(plan.deadline))} · 每天至少 ${"%.1f".format(daily)}%"
+                    }, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { repository.remove(plan.bookId); version++ }) { Text("删除计划", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        } },
+        confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
     )
 }
 

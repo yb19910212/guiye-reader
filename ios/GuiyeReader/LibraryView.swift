@@ -18,6 +18,7 @@ struct LibraryView: View {
     @State private var pendingImportURLs: [URL] = []
     @State private var showsHistory = false
     @State private var showsStats = false
+    @State private var showsPlans = false
     @State private var editingBook: Book?
     @State private var selectedBookIDs: Set<String> = []
     @State private var editMode: EditMode = .inactive
@@ -56,6 +57,7 @@ struct LibraryView: View {
                     Button { showsNotes = true } label: { Label("笔记", systemImage: "note.text") }
                     Button { showsHistory = true } label: { Label("历史", systemImage: "clock.arrow.circlepath") }
                     Button { showsStats = true } label: { Label("统计", systemImage: "chart.bar") }
+                    Button { showsPlans = true } label: { Label("计划", systemImage: "calendar.badge.clock") }
                     Button(editMode.isEditing ? "完成" : "管理") {
                         editMode = editMode.isEditing ? .inactive : .active
                         if !editMode.isEditing { selectedBookIDs.removeAll() }
@@ -83,6 +85,7 @@ struct LibraryView: View {
                     }
                 }
                 .sheet(isPresented: $showsStats) { ReadingStatsView() }
+                .sheet(isPresented: $showsPlans) { ReadingPlansView(books: repository.books) }
                 .sheet(item: $editingBook) { book in
                     BookEditorView(book: book) { title, author in repository.updateMetadata(bookID: book.id, title: title, author: author) }
                 }

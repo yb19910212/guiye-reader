@@ -10,6 +10,7 @@ struct GuiyeBackup: Codable {
     let textPositions: [String: Int]
     let readingStats: [String: Double]?
     let goalMinutes: Int?
+    let readingPlans: [ReadingPlan]?
 }
 
 struct LibraryBackupDocument: FileDocument {

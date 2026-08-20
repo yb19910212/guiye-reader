@@ -87,7 +87,7 @@ class BookRepository(private val context: Context) {
     }
 
     fun backupJson(): String = JSONObject().apply {
-        put("version", 3)
+        put("version", 4)
         put("exportedAt", System.currentTimeMillis())
         put("books", JSONArray().apply { allBooks().forEach { put(it.toJson()) } })
         put("notes", JSONArray(context.getSharedPreferences("guiye_notes", Context.MODE_PRIVATE).getString("notes", "[]")))
@@ -98,11 +98,12 @@ class BookRepository(private val context: Context) {
         val stats = context.getSharedPreferences("guiye_reading_stats", Context.MODE_PRIVATE)
         put("readingStats", JSONObject(stats.getString("daily", "{}")))
         put("goalMinutes", stats.getInt("goalMinutes", 30))
+        put("readingPlans", JSONArray(context.getSharedPreferences("guiye_reading_plans", Context.MODE_PRIVATE).getString("plans", "[]")))
     }.toString(2)
 
     fun restoreBackup(text: String): Result<String> = runCatching {
         val root = JSONObject(text)
-        require(root.optInt("version", 1) <= 3) { "备份来自更高版本的归页，请先更新 App" }
+        require(root.optInt("version", 1) <= 4) { "备份来自更高版本的归页，请先更新 App" }
         val importedBooks = root.optJSONArray("books") ?: JSONArray()
         val metadata = (0 until importedBooks.length()).mapNotNull { runCatching { Book.fromJson(importedBooks.getJSONObject(it)) }.getOrNull() }.associateBy { it.id }
         var matched = 0
@@ -125,7 +126,23 @@ class BookRepository(private val context: Context) {
             importedStats.keys().forEach { key -> currentStats.put(key, maxOf(currentStats.optLong(key, 0), importedStats.optLong(key, 0))) }
             stats.edit().putString("daily", currentStats.toString()).putInt("goalMinutes", root.optInt("goalMinutes", stats.getInt("goalMinutes", 30))).apply()
         }
-        "已合并 $matched 本书的进度、$noteCount 条笔记和 $bookmarkCount 个书签"
+        val planCount = mergeReadingPlans(root.optJSONArray("readingPlans") ?: JSONArray())
+        "已合并 $matched 本书的进度、$noteCount 条笔记、$bookmarkCount 个书签和 $planCount 个计划"
+    }
+
+    private fun mergeReadingPlans(imported: JSONArray): Int {
+        val target = context.getSharedPreferences("guiye_reading_plans", Context.MODE_PRIVATE)
+        val current = runCatching { JSONArray(target.getString("plans", "[]")) }.getOrDefault(JSONArray())
+        val values = mutableMapOf<String, JSONObject>()
+        for (index in 0 until current.length()) current.optJSONObject(index)?.let { values[it.optString("bookId")] = it }
+        var changed = 0
+        for (index in 0 until imported.length()) {
+            val plan = imported.optJSONObject(index) ?: continue
+            val bookId = plan.optString("bookId"); val existing = values[bookId]
+            if (bookId.isNotBlank() && (existing == null || plan.optLong("deadline") > existing.optLong("deadline"))) { values[bookId] = plan; changed++ }
+        }
+        target.edit().putString("plans", JSONArray(values.values).toString()).apply()
+        return changed
     }
 
     private fun mergeArrayPreference(preferenceName: String, key: String, imported: JSONArray): Int {
