@@ -3,6 +3,9 @@ import SwiftUI
 struct ReaderView: View {
     @EnvironmentObject private var theme: ThemeStore
     @StateObject private var model: ReaderViewModel
+    @StateObject private var noteStore = NoteStore()
+    @StateObject private var bookmarkStore = BookmarkStore()
+    private let book: Book?
     private let bookID: String?
     private let onProgress: (Double) -> Void
     private let loadParagraphs: (() async -> [String])?
@@ -10,6 +13,8 @@ struct ReaderView: View {
     @State private var showsContents = false
     @State private var showsSearch = false
     @State private var showsAppearance = false
+    @State private var showsAnnotation = false
+    @State private var annotationDraft = ""
     @State private var visibleParagraph: Int?
     @State private var progressSaveTask: Task<Void, Never>?
     @State private var isRecordingScroll = false
@@ -21,6 +26,7 @@ struct ReaderView: View {
 
     init(book: Book? = nil, paragraphs: [String]? = nil, loadParagraphs: (() async -> [String])? = nil, onProgress: @escaping (Double) -> Void = { _ in }) {
         let id = book?.id
+        self.book = book
         self.bookID = id
         self.onProgress = onProgress
         self.loadParagraphs = loadParagraphs
@@ -49,10 +55,16 @@ struct ReaderView: View {
                                 .foregroundStyle(theme.palette.text)
                                 .padding(10)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(index == model.currentParagraph && model.playbackState != .idle ? theme.palette.highlight : .clear)
+                                .background(paragraphBackground(index))
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                                 .contentShape(Rectangle())
                                 .onTapGesture { model.move(to: index) }
+                                .onLongPressGesture {
+                                    guard book != nil else { return }
+                                    model.move(to: index)
+                                    annotationDraft = ""
+                                    showsAnnotation = true
+                                }
                                 .id(index)
                         }
                     }
@@ -87,6 +99,10 @@ struct ReaderView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { toggleCurrentBookmark() } label: { Image(systemName: isCurrentBookmarked ? "bookmark.fill" : "bookmark") }
+                        .disabled(book == nil)
+                    Button { annotationDraft = ""; showsAnnotation = true } label: { Image(systemName: "note.text.badge.plus") }
+                        .disabled(book == nil)
                     Button { showsSearch = true } label: { Image(systemName: "magnifyingglass") }
                     Button { showsContents = true } label: { Image(systemName: "list.bullet") }
                     Button("Aa") { showsAppearance = true }.font(.headline)
@@ -95,10 +111,16 @@ struct ReaderView: View {
             .safeAreaInset(edge: .bottom) { speechControls }
         }
         .tint(theme.palette.accent)
-        .sheet(isPresented: $showsContents) { TXTContentsView(chapters: model.chapters, selected: jumpToParagraph) }
+        .sheet(isPresented: $showsContents) { TXTContentsView(chapters: model.chapters, bookmarks: currentBookmarks, selected: jumpToParagraph) }
         .sheet(isPresented: $showsSearch) { TXTSearchView(model: model, selected: jumpToParagraph) }
         .sheet(isPresented: $showsAppearance) {
             TXTAppearanceView(fontSize: $fontSize, lineSpacing: $lineSpacing, paragraphSpacing: $paragraphSpacing, horizontalPadding: $horizontalPadding)
+        }
+        .sheet(isPresented: $showsAnnotation) {
+            TXTAnnotationView(quote: currentParagraphText, draft: $annotationDraft) {
+                guard let book else { return }
+                noteStore.addAnnotation(book: book, text: annotationDraft, quote: currentParagraphText, locator: "第 \(model.currentParagraph + 1) 段")
+            }
         }
         .onDisappear { persistPositionImmediately() }
         .onChange(of: scenePhase) { _, phase in
@@ -141,6 +163,20 @@ struct ReaderView: View {
         model.voices.first(where: { $0.id == model.selectedVoiceID })?.name ?? "自动音色"
     }
     private var speedDisplay: Float { 0.6 + (model.rate - 0.35) / 0.30 }
+    private var currentParagraphText: String { model.paragraphs.indices.contains(model.currentParagraph) ? model.paragraphs[model.currentParagraph] : "" }
+    private var currentBookmarks: [ReadingBookmark] { book.map { bookmarkStore.forBook($0.id) } ?? [] }
+    private var isCurrentBookmarked: Bool { book.map { bookmarkStore.isBookmarked(bookID: $0.id, paragraphIndex: model.currentParagraph) } ?? false }
+
+    private func toggleCurrentBookmark() {
+        guard let book else { return }
+        bookmarkStore.toggle(book: book, paragraphIndex: model.currentParagraph, excerpt: currentParagraphText)
+    }
+
+    private func paragraphBackground(_ index: Int) -> Color {
+        if index == model.currentParagraph && model.playbackState != .idle { return theme.palette.highlight }
+        if let book, bookmarkStore.isBookmarked(bookID: book.id, paragraphIndex: index) { return theme.palette.accent.opacity(0.12) }
+        return .clear
+    }
 
     private func jumpToParagraph(_ index: Int) {
         visibleParagraph = index
@@ -173,25 +209,66 @@ struct ReaderView: View {
 
 private struct TXTContentsView: View {
     let chapters: [TXTChapter]
+    let bookmarks: [ReadingBookmark]
     let selected: (Int) -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            List(chapters) { chapter in
-                Button {
-                    selected(chapter.index)
-                    dismiss()
-                } label: {
-                    HStack {
-                        Text(chapter.title).foregroundStyle(.primary)
-                        Spacer()
-                        Text("第 \(chapter.index + 1) 段").font(.caption).foregroundStyle(.secondary)
+            List {
+                Section("章节") {
+                    ForEach(chapters) { chapter in
+                        Button {
+                            selected(chapter.index)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                Text(chapter.title).foregroundStyle(.primary)
+                                Spacer()
+                                Text("第 \(chapter.index + 1) 段").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                if !bookmarks.isEmpty {
+                    Section("书签") {
+                        ForEach(bookmarks) { bookmark in
+                            Button {
+                                selected(bookmark.paragraphIndex)
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(bookmark.excerpt).lineLimit(2).foregroundStyle(.primary)
+                                    Text("第 \(bookmark.paragraphIndex + 1) 段").font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
                     }
                 }
             }
             .navigationTitle("章节目录")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+}
+
+private struct TXTAnnotationView: View {
+    let quote: String
+    @Binding var draft: String
+    let save: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("原文") { Text(quote).font(.callout).foregroundStyle(.secondary).lineLimit(6) }
+                Section("批注") { TextEditor(text: $draft).frame(minHeight: 180) }
+            }
+            .navigationTitle("段落批注")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("保存") { save(); dismiss() }.disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+            }
         }
     }
 }

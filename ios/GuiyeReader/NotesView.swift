@@ -14,8 +14,10 @@ struct NotesView: View {
                 ForEach(filteredNotes) { note in
                     VStack(alignment: .leading, spacing: 7) {
                         Text(note.bookTitle).font(.headline)
+                        if let quote = note.quote { Text("“\(quote)”").font(.callout).foregroundStyle(.secondary).lineLimit(4) }
                         Text(note.text)
-                        if note.quote != nil { Label("高亮摘录", systemImage: "highlighter").font(.caption).foregroundStyle(.orange) }
+                        if let locator = note.locator { Label(locator, systemImage: "location").font(.caption).foregroundStyle(.secondary) }
+                        if note.quote != nil { Label(note.color == "annotation" ? "段落批注" : "高亮摘录", systemImage: note.color == "annotation" ? "note.text" : "highlighter").font(.caption).foregroundStyle(.orange) }
                         Text(note.createdAt.formatted()).font(.caption).foregroundStyle(.secondary)
                     }
                 }
@@ -50,6 +52,7 @@ struct NotesView: View {
     }
 
     private var filteredNotes: [ReadingNote] {
-        searchText.isEmpty ? store.notes : store.notes.filter { $0.text.localizedCaseInsensitiveContains(searchText) || $0.bookTitle.localizedCaseInsensitiveContains(searchText) }
+        searchText.isEmpty ? store.notes : store.notes.filter { $0.text.localizedCaseInsensitiveContains(searchText) || $0.bookTitle.localizedCaseInsensitiveContains(searchText) || ($0.quote?.localizedCaseInsensitiveContains(searchText) == true) }
     }
 }
+
