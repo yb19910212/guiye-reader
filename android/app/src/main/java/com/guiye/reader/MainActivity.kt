@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.Lifecycle
@@ -41,6 +42,7 @@ import com.guiye.reader.opds.OpdsPage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 private enum class ReaderTheme(val title: String) {
     PAPER("纸张"), SEPIA("暖棕"), FOREST("森林"), NIGHT("夜间");
@@ -374,7 +376,17 @@ private fun formatBytes(bytes: Long): String = when {
 @Composable
 private fun ReaderScreen(vm: ReaderViewModel) {
     var showsVoiceLibrary by remember { mutableStateOf(false) }
+    var showsContents by remember { mutableStateOf(false) }
+    var showsSearch by remember { mutableStateOf(false) }
+    var showsAppearance by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val preferences = remember { context.getSharedPreferences("text_reader_appearance", android.content.Context.MODE_PRIVATE) }
+    var fontSize by remember { mutableFloatStateOf(preferences.getFloat("font_size", 20f)) }
+    var lineSpacing by remember { mutableFloatStateOf(preferences.getFloat("line_spacing", 9f)) }
+    var paragraphSpacing by remember { mutableFloatStateOf(preferences.getFloat("paragraph_spacing", 8f)) }
+    var horizontalPadding by remember { mutableFloatStateOf(preferences.getFloat("horizontal_padding", 28f)) }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     val bookId = vm.currentBook?.id
 
@@ -400,7 +412,15 @@ private fun ReaderScreen(vm: ReaderViewModel) {
         }
     }
     Scaffold(
-        topBar = { TopAppBar(title = { Text(vm.currentBook?.title ?: "阅读") }, navigationIcon = { TextButton(onClick = vm::closeBook) { Text("‹ 书库") } }, actions = { Text("Aa", modifier = Modifier.padding(16.dp)) }) },
+        topBar = { TopAppBar(
+            title = { Text(vm.currentBook?.title ?: "阅读") },
+            navigationIcon = { TextButton(onClick = vm::closeBook) { Text("‹ 书库") } },
+            actions = {
+                TextButton(onClick = { showsSearch = true }) { Text("搜索") }
+                TextButton(onClick = { showsContents = true }) { Text("目录") }
+                TextButton(onClick = { showsAppearance = true }) { Text("Aa") }
+            }
+        ) },
         bottomBar = {
             Surface(tonalElevation = 4.dp) {
                 Column(Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -418,18 +438,98 @@ private fun ReaderScreen(vm: ReaderViewModel) {
             }
         }
     ) { padding ->
-        LazyColumn(state = listState, modifier = Modifier.padding(padding).fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 28.dp), contentPadding = PaddingValues(vertical = 24.dp)) {
+        LazyColumn(state = listState, modifier = Modifier.padding(padding).fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = horizontalPadding.dp), contentPadding = PaddingValues(vertical = 24.dp)) {
             item {
                 Text(vm.currentBook?.title ?: "阅读", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onBackground)
                 Text("${vm.currentBook?.format?.name} · 本地文件", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp, bottom = 22.dp))
             }
             itemsIndexed(vm.paragraphs, key = { index, _ -> index }) { index, paragraph ->
-                Text(paragraph, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif), modifier = Modifier.fillMaxWidth().background(if (index == vm.currentParagraph && vm.speechState != SpeechState.IDLE) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, RoundedCornerShape(8.dp)).clickable { vm.selectParagraph(index) }.padding(10.dp), color = MaterialTheme.colorScheme.onBackground)
-                Spacer(Modifier.height(8.dp))
+                Text(paragraph, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Serif, fontSize = fontSize.sp, lineHeight = (fontSize + lineSpacing).sp), modifier = Modifier.fillMaxWidth().background(if (index == vm.currentParagraph && vm.speechState != SpeechState.IDLE) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent, RoundedCornerShape(8.dp)).clickable { vm.selectParagraph(index) }.padding(10.dp), color = MaterialTheme.colorScheme.onBackground)
+                Spacer(Modifier.height(paragraphSpacing.dp))
             }
         }
     }
     if (showsVoiceLibrary) VoiceLibraryDialog(vm) { showsVoiceLibrary = false }
+    if (showsContents) AlertDialog(
+        onDismissRequest = { showsContents = false },
+        title = { Text("章节目录") },
+        text = {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
+                itemsIndexed(vm.textChapters) { _, chapter ->
+                    TextButton(onClick = {
+                        vm.selectParagraph(chapter.index)
+                        scope.launch { listState.animateScrollToItem(chapter.index + 1) }
+                        showsContents = false
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text(chapter.title, modifier = Modifier.weight(1f))
+                        Text("第 ${chapter.index + 1} 段", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showsContents = false }) { Text("完成") } }
+    )
+    if (showsSearch) TextSearchDialog(vm, onSelect = { index ->
+        vm.selectParagraph(index)
+        scope.launch { listState.animateScrollToItem(index + 1) }
+        showsSearch = false
+    }, dismiss = { showsSearch = false })
+    if (showsAppearance) AlertDialog(
+        onDismissRequest = { showsAppearance = false },
+        title = { Text("阅读排版") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                AppearanceSlider("字号", fontSize, 14f..34f) { fontSize = it; preferences.edit().putFloat("font_size", it).apply() }
+                AppearanceSlider("行距", lineSpacing, 2f..20f) { lineSpacing = it; preferences.edit().putFloat("line_spacing", it).apply() }
+                AppearanceSlider("段距", paragraphSpacing, 4f..28f) { paragraphSpacing = it; preferences.edit().putFloat("paragraph_spacing", it).apply() }
+                AppearanceSlider("页边距", horizontalPadding, 12f..48f) { horizontalPadding = it; preferences.edit().putFloat("horizontal_padding", it).apply() }
+                TextButton(onClick = {
+                    fontSize = 20f; lineSpacing = 9f; paragraphSpacing = 8f; horizontalPadding = 28f
+                    preferences.edit().clear().apply()
+                }) { Text("恢复默认排版") }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showsAppearance = false }) { Text("完成") } }
+    )
+}
+
+@Composable
+private fun TextSearchDialog(vm: ReaderViewModel, onSelect: (Int) -> Unit, dismiss: () -> Unit) {
+    var query by remember { mutableStateOf("") }
+    val results = remember(query, vm.paragraphs) {
+        if (query.isBlank()) emptyList() else vm.paragraphs.mapIndexedNotNull { index, paragraph ->
+            if (paragraph.contains(query.trim(), ignoreCase = true)) index to paragraph else null
+        }.take(100)
+    }
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("正文搜索") },
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
+                OutlinedTextField(query, { query = it }, label = { Text("搜索本书正文") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (query.isNotBlank() && results.isEmpty()) Text("没有找到相关内容", modifier = Modifier.padding(vertical = 24.dp))
+                LazyColumn(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    itemsIndexed(results) { _, result ->
+                        TextButton(onClick = { onSelect(result.first) }, modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                                Text(result.second, maxLines = 3, color = MaterialTheme.colorScheme.onSurface)
+                                Text("第 ${result.first + 1} 段", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
+    )
+}
+
+@Composable
+private fun AppearanceSlider(title: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
+    Column {
+        Row { Text(title); Spacer(Modifier.weight(1f)); Text(value.toInt().toString()) }
+        Slider(value = value, onValueChange = onChange, valueRange = range, steps = (range.endInclusive - range.start).toInt() - 1)
+    }
 }
 
 @Composable
@@ -480,3 +580,4 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
         confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
     )
 }
+

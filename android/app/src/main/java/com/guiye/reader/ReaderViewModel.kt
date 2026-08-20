@@ -11,6 +11,8 @@ import androidx.lifecycle.viewModelScope
 import com.guiye.reader.library.Book
 import com.guiye.reader.library.BookFormat
 import com.guiye.reader.library.BookRepository
+import com.guiye.reader.library.TextChapter
+import com.guiye.reader.library.TextParser
 import com.guiye.reader.speech.AndroidTtsEngine
 import com.guiye.reader.speech.SpeechSegment
 import com.guiye.reader.speech.SpeechState
@@ -56,6 +58,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var importState by mutableStateOf(ImportUiState())
         private set
     var paragraphs by mutableStateOf(sampleParagraphs)
+        private set
+    var textChapters by mutableStateOf(TextParser.chapters(sampleParagraphs))
         private set
     private val segments get() = paragraphs.mapIndexed { i, text -> SpeechSegment(i, text, detectLanguage(text)) }
 
@@ -148,11 +152,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         currentBook = books.firstOrNull { it.id == book.id } ?: book
         if (book.format == BookFormat.TXT) {
             paragraphs = listOf("正在载入正文…")
+            textChapters = emptyList()
             currentParagraph = 0
             viewModelScope.launch {
                 val loaded = withContext(Dispatchers.IO) { repository.readParagraphs(book).getOrElse { listOf("无法读取文件：${it.message}") } }
                 if (currentBook?.id == book.id) {
                     paragraphs = loaded
+                    textChapters = TextParser.chapters(loaded)
                     currentParagraph = positionPrefs.getInt("text.${book.id}", 0).coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
                 }
             }
@@ -171,7 +177,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         repository.deleteBooks(ids); books = repository.allBooks()
     }
 
-    fun closeBook() { flushTextPosition(); stopSpeech(); currentBook = null; paragraphs = sampleParagraphs }
+    fun closeBook() { flushTextPosition(); stopSpeech(); currentBook = null; paragraphs = sampleParagraphs; textChapters = TextParser.chapters(sampleParagraphs) }
     private fun stopSpeech() { engine.stop(); speechState = SpeechState.IDLE }
 
     fun selectParagraph(index: Int) {
@@ -260,3 +266,4 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
     override fun onCleared() { flushTextPosition(); engine.shutdown() }
 }
+

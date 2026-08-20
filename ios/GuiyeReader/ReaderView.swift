@@ -7,10 +7,17 @@ struct ReaderView: View {
     private let onProgress: (Double) -> Void
     private let loadParagraphs: (() async -> [String])?
     @State private var showsVoiceLibrary = false
+    @State private var showsContents = false
+    @State private var showsSearch = false
+    @State private var showsAppearance = false
     @State private var visibleParagraph: Int?
     @State private var progressSaveTask: Task<Void, Never>?
     @State private var isRecordingScroll = false
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("textReader.fontSize") private var fontSize = 20.0
+    @AppStorage("textReader.lineSpacing") private var lineSpacing = 9.0
+    @AppStorage("textReader.paragraphSpacing") private var paragraphSpacing = 12.0
+    @AppStorage("textReader.horizontalPadding") private var horizontalPadding = 24.0
 
     init(book: Book? = nil, paragraphs: [String]? = nil, loadParagraphs: (() async -> [String])? = nil, onProgress: @escaping (Double) -> Void = { _ in }) {
         let id = book?.id
@@ -26,19 +33,19 @@ struct ReaderView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: paragraphSpacing) {
                         Text(model.title)
                             .font(.largeTitle.weight(.semibold))
                             .foregroundStyle(theme.palette.text)
-                        Text("示例内容 · 自动识别中英文")
+                        Text("TXT · 本地阅读")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(theme.palette.accent)
                             .padding(.bottom, 10)
 
                         ForEach(model.paragraphs.indices, id: \.self) { index in
                             Text(model.paragraphs[index])
-                                .font(.system(size: 20, design: .serif))
-                                .lineSpacing(9)
+                                .font(.system(size: fontSize, design: .serif))
+                                .lineSpacing(lineSpacing)
                                 .foregroundStyle(theme.palette.text)
                                 .padding(10)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -50,7 +57,8 @@ struct ReaderView: View {
                         }
                     }
                     .scrollTargetLayout()
-                    .padding(24)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, 24)
                 }
                 .scrollPosition(id: $visibleParagraph, anchor: .top)
                 .onChange(of: visibleParagraph) { _, index in
@@ -77,9 +85,21 @@ struct ReaderView: View {
             .background(theme.palette.background)
             .navigationTitle(model.title)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { showsSearch = true } label: { Image(systemName: "magnifyingglass") }
+                    Button { showsContents = true } label: { Image(systemName: "list.bullet") }
+                    Button("Aa") { showsAppearance = true }.font(.headline)
+                }
+            }
             .safeAreaInset(edge: .bottom) { speechControls }
         }
         .tint(theme.palette.accent)
+        .sheet(isPresented: $showsContents) { TXTContentsView(chapters: model.chapters, selected: jumpToParagraph) }
+        .sheet(isPresented: $showsSearch) { TXTSearchView(model: model, selected: jumpToParagraph) }
+        .sheet(isPresented: $showsAppearance) {
+            TXTAppearanceView(fontSize: $fontSize, lineSpacing: $lineSpacing, paragraphSpacing: $paragraphSpacing, horizontalPadding: $horizontalPadding)
+        }
         .onDisappear { persistPositionImmediately() }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { persistPositionImmediately() }
@@ -122,6 +142,11 @@ struct ReaderView: View {
     }
     private var speedDisplay: Float { 0.6 + (model.rate - 0.35) / 0.30 }
 
+    private func jumpToParagraph(_ index: Int) {
+        visibleParagraph = index
+        model.move(to: index)
+    }
+
     private func schedulePositionSave(_ index: Int) {
         guard let bookID else { return }
         UserDefaults.standard.set(index, forKey: "text.\(bookID)")
@@ -143,6 +168,102 @@ struct ReaderView: View {
 
     private func progress(for index: Int) -> Double {
         model.paragraphs.count <= 1 ? 0 : Double(index) / Double(model.paragraphs.count - 1)
+    }
+}
+
+private struct TXTContentsView: View {
+    let chapters: [TXTChapter]
+    let selected: (Int) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(chapters) { chapter in
+                Button {
+                    selected(chapter.index)
+                    dismiss()
+                } label: {
+                    HStack {
+                        Text(chapter.title).foregroundStyle(.primary)
+                        Spacer()
+                        Text("第 \(chapter.index + 1) 段").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("章节目录")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+}
+
+private struct TXTSearchView: View {
+    @ObservedObject var model: ReaderViewModel
+    let selected: (Int) -> Void
+    @State private var query = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ContentUnavailableView("搜索正文", systemImage: "text.magnifyingglass", description: Text("输入关键词，在本书中查找内容"))
+                } else if results.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                } else {
+                    List(results) { result in
+                        Button {
+                            selected(result.index)
+                            dismiss()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(result.text).lineLimit(3).foregroundStyle(.primary)
+                                Text("第 \(result.index + 1) 段").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索本书正文")
+            .navigationTitle("正文搜索")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+
+    private var results: [TXTSearchResult] { model.search(query) }
+}
+
+private struct TXTAppearanceView: View {
+    @Binding var fontSize: Double
+    @Binding var lineSpacing: Double
+    @Binding var paragraphSpacing: Double
+    @Binding var horizontalPadding: Double
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("正文") {
+                    setting("字号", value: $fontSize, range: 14...34, suffix: " pt")
+                    setting("行距", value: $lineSpacing, range: 2...20, suffix: "")
+                    setting("段距", value: $paragraphSpacing, range: 4...28, suffix: "")
+                    setting("页边距", value: $horizontalPadding, range: 12...48, suffix: "")
+                }
+                Section {
+                    Button("恢复默认排版") {
+                        fontSize = 20; lineSpacing = 9; paragraphSpacing = 12; horizontalPadding = 24
+                    }
+                }
+            }
+            .navigationTitle("阅读排版")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+
+    private func setting(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, suffix: String) -> some View {
+        VStack(alignment: .leading) {
+            HStack { Text(title); Spacer(); Text("\(Int(value.wrappedValue))\(suffix)").foregroundStyle(.secondary).monospacedDigit() }
+            Slider(value: value, in: range, step: 1)
+        }
     }
 }
 

@@ -12,6 +12,7 @@ final class ReaderViewModel: ObservableObject {
 
     let title: String
     @Published private(set) var paragraphs: [String]
+    @Published private(set) var chapters: [TXTChapter]
     @Published var currentParagraph = 0
     @Published var playbackState: SpeechPlaybackState = .idle
     @Published var rate: Float = 0.5
@@ -24,6 +25,7 @@ final class ReaderViewModel: ObservableObject {
     init(title: String = "为什么阅读需要一个闭环", paragraphs: [String] = ReaderViewModel.sampleParagraphs, startIndex: Int = 0, engine: SystemSpeechEngine = SystemSpeechEngine()) {
         self.title = title
         self.paragraphs = paragraphs.isEmpty ? ["文件内容为空"] : paragraphs
+        self.chapters = TXTParser.chapters(in: self.paragraphs)
         self.engine = engine
         self.requestedStartIndex = startIndex
         self.currentParagraph = min(max(0, startIndex), self.paragraphs.count - 1)
@@ -35,7 +37,16 @@ final class ReaderViewModel: ObservableObject {
         engine.stop()
         playbackState = .idle
         paragraphs = values.isEmpty ? ["文件内容为空"] : values
+        chapters = TXTParser.chapters(in: paragraphs)
         currentParagraph = min(max(0, requestedStartIndex), paragraphs.count - 1)
+    }
+
+    func search(_ query: String, limit: Int = 100) -> [TXTSearchResult] {
+        let value = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return [] }
+        return paragraphs.enumerated().lazy.compactMap { index, paragraph in
+            paragraph.localizedCaseInsensitiveContains(value) ? TXTSearchResult(index: index, text: paragraph) : nil
+        }.prefix(limit).map { $0 }
     }
 
     func playOrPause() {
@@ -68,3 +79,4 @@ final class ReaderViewModel: ObservableObject {
         engine.speak(segments: segments, from: currentParagraph, voiceID: selectedVoiceID, rate: rate); playbackState = .playing
     }
 }
+
