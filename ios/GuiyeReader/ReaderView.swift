@@ -14,7 +14,9 @@ struct ReaderView: View {
     @State private var showsSearch = false
     @State private var showsAppearance = false
     @State private var showsAnnotation = false
+    @State private var showsHighlighter = false
     @State private var annotationDraft = ""
+    @State private var annotationTags = ""
     @State private var visibleParagraph: Int?
     @State private var progressSaveTask: Task<Void, Never>?
     @State private var isRecordingScroll = false
@@ -63,6 +65,7 @@ struct ReaderView: View {
                                     guard book != nil else { return }
                                     model.move(to: index)
                                     annotationDraft = ""
+                                    annotationTags = ""
                                     showsAnnotation = true
                                 }
                                 .id(index)
@@ -101,7 +104,9 @@ struct ReaderView: View {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button { toggleCurrentBookmark() } label: { Image(systemName: isCurrentBookmarked ? "bookmark.fill" : "bookmark") }
                         .disabled(book == nil)
-                    Button { annotationDraft = ""; showsAnnotation = true } label: { Image(systemName: "note.text.badge.plus") }
+                    Button { annotationDraft = ""; annotationTags = ""; showsAnnotation = true } label: { Image(systemName: "note.text.badge.plus") }
+                        .disabled(book == nil)
+                    Button { showsHighlighter = true } label: { Image(systemName: currentHighlight == nil ? "highlighter" : "highlighter") }
                         .disabled(book == nil)
                     Button { showsSearch = true } label: { Image(systemName: "magnifyingglass") }
                     Button { showsContents = true } label: { Image(systemName: "list.bullet") }
@@ -117,10 +122,19 @@ struct ReaderView: View {
             TXTAppearanceView(fontSize: $fontSize, lineSpacing: $lineSpacing, paragraphSpacing: $paragraphSpacing, horizontalPadding: $horizontalPadding)
         }
         .sheet(isPresented: $showsAnnotation) {
-            TXTAnnotationView(quote: currentParagraphText, draft: $annotationDraft) {
+            TXTAnnotationView(quote: currentParagraphText, draft: $annotationDraft, tags: $annotationTags) {
                 guard let book else { return }
-                noteStore.addAnnotation(book: book, text: annotationDraft, quote: currentParagraphText, locator: "第 \(model.currentParagraph + 1) 段")
+                noteStore.addAnnotation(book: book, text: annotationDraft, quote: currentParagraphText, locator: currentLocator, tags: parsedAnnotationTags)
+                annotationTags = ""
             }
+        }
+        .confirmationDialog("段落高亮", isPresented: $showsHighlighter, titleVisibility: .visible) {
+            Button("黄色") { setCurrentHighlight("yellow") }
+            Button("绿色") { setCurrentHighlight("green") }
+            Button("蓝色") { setCurrentHighlight("blue") }
+            Button("粉色") { setCurrentHighlight("pink") }
+            if currentHighlight != nil { Button("移除高亮", role: .destructive) { setCurrentHighlight(nil) } }
+            Button("取消", role: .cancel) {}
         }
         .onDisappear { persistPositionImmediately() }
         .onChange(of: scenePhase) { _, phase in
@@ -164,6 +178,9 @@ struct ReaderView: View {
     }
     private var speedDisplay: Float { 0.6 + (model.rate - 0.35) / 0.30 }
     private var currentParagraphText: String { model.paragraphs.indices.contains(model.currentParagraph) ? model.paragraphs[model.currentParagraph] : "" }
+    private var currentLocator: String { "第 \(model.currentParagraph + 1) 段" }
+    private var currentHighlight: ReadingNote? { guard let book else { return nil }; return noteStore.highlight(bookID: book.id, locator: currentLocator) }
+    private var parsedAnnotationTags: [String] { annotationTags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
     private var currentBookmarks: [ReadingBookmark] { book.map { bookmarkStore.forBook($0.id) } ?? [] }
     private var isCurrentBookmarked: Bool { book.map { bookmarkStore.isBookmarked(bookID: $0.id, paragraphIndex: model.currentParagraph) } ?? false }
 
@@ -172,8 +189,16 @@ struct ReaderView: View {
         bookmarkStore.toggle(book: book, paragraphIndex: model.currentParagraph, excerpt: currentParagraphText)
     }
 
+    private func setCurrentHighlight(_ color: String?) {
+        guard let book else { return }
+        noteStore.setHighlight(book: book, quote: currentParagraphText, locator: currentLocator, color: color)
+    }
+
     private func paragraphBackground(_ index: Int) -> Color {
         if index == model.currentParagraph && model.playbackState != .idle { return theme.palette.highlight }
+        if let book, let highlight = noteStore.highlight(bookID: book.id, locator: "第 \(index + 1) 段") {
+            switch highlight.color { case "green": return .green.opacity(0.18); case "blue": return .blue.opacity(0.16); case "pink": return .pink.opacity(0.18); default: return .yellow.opacity(0.24) }
+        }
         if let book, bookmarkStore.isBookmarked(bookID: book.id, paragraphIndex: index) { return theme.palette.accent.opacity(0.12) }
         return .clear
     }
@@ -255,6 +280,7 @@ private struct TXTContentsView: View {
 private struct TXTAnnotationView: View {
     let quote: String
     @Binding var draft: String
+    @Binding var tags: String
     let save: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -263,6 +289,7 @@ private struct TXTAnnotationView: View {
             Form {
                 Section("原文") { Text(quote).font(.callout).foregroundStyle(.secondary).lineLimit(6) }
                 Section("批注") { TextEditor(text: $draft).frame(minHeight: 180) }
+                Section("标签") { TextField("例如：观点, 待复习", text: $tags) }
             }
             .navigationTitle("段落批注")
             .toolbar {

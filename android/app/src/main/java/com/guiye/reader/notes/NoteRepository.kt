@@ -6,7 +6,7 @@ import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ReadingNote(val id: String, val bookId: String, val bookTitle: String, val text: String, val locator: String?, val createdAt: Long, val quote: String? = null, val color: String? = null)
+data class ReadingNote(val id: String, val bookId: String, val bookTitle: String, val text: String, val locator: String?, val createdAt: Long, val quote: String? = null, val color: String? = null, val tags: List<String> = emptyList())
 data class ReadingBookmark(val id: String, val bookId: String, val bookTitle: String, val paragraphIndex: Int, val excerpt: String, val createdAt: Long)
 
 class NoteRepository(context: Context) {
@@ -16,7 +16,9 @@ class NoteRepository(context: Context) {
         val array = runCatching { JSONArray(prefs.getString("notes", "[]")) }.getOrDefault(JSONArray())
         return (0 until array.length()).mapNotNull { index ->
             runCatching { array.getJSONObject(index) }.getOrNull()?.let { json ->
-                ReadingNote(json.getString("id"), json.getString("bookId"), json.getString("bookTitle"), json.getString("text"), json.optString("locator").ifBlank { null }, json.getLong("createdAt"), json.optString("quote").ifBlank { null }, json.optString("color").ifBlank { null })
+                val tagsArray = json.optJSONArray("tags") ?: JSONArray()
+                val tags = (0 until tagsArray.length()).mapNotNull { tagsArray.optString(it).ifBlank { null } }
+                ReadingNote(json.getString("id"), json.getString("bookId"), json.getString("bookTitle"), json.getString("text"), json.optString("locator").ifBlank { null }, json.getLong("createdAt"), json.optString("quote").ifBlank { null }, json.optString("color").ifBlank { null }, tags)
             }
         }.sortedByDescending { it.createdAt }
     }
@@ -31,19 +33,35 @@ class NoteRepository(context: Context) {
         save(listOf(ReadingNote(UUID.randomUUID().toString(), book.id, book.title, cleaned, locator, System.currentTimeMillis(), cleaned, "yellow")) + all())
     }
 
-    fun addAnnotation(book: Book, text: String, quote: String, locator: String) {
+    fun addAnnotation(book: Book, text: String, quote: String, locator: String, tags: List<String> = emptyList()) {
         val cleaned = text.trim(); if (cleaned.isEmpty()) return
-        save(listOf(ReadingNote(UUID.randomUUID().toString(), book.id, book.title, cleaned, locator, System.currentTimeMillis(), quote, "annotation")) + all())
+        save(listOf(ReadingNote(UUID.randomUUID().toString(), book.id, book.title, cleaned, locator, System.currentTimeMillis(), quote, "annotation", tags)) + all())
     }
 
+    fun setHighlight(book: Book, quote: String, locator: String, color: String?) {
+        val values = all().filterNot { it.bookId == book.id && it.locator == locator && it.color != "annotation" && it.quote != null }.toMutableList()
+        if (color != null) values.add(0, ReadingNote(UUID.randomUUID().toString(), book.id, book.title, quote, locator, System.currentTimeMillis(), quote, color))
+        save(values)
+    }
+
+    fun highlight(bookId: String, locator: String): ReadingNote? = all().firstOrNull { it.bookId == bookId && it.locator == locator && it.color != "annotation" && it.quote != null }
+    fun highlights(bookId: String): Map<String, ReadingNote> = all().filter { it.bookId == bookId && it.locator != null && it.color != "annotation" && it.quote != null }.associateBy { it.locator!! }
+
+    fun update(id: String, text: String, tags: List<String>) {
+        val cleaned = text.trim(); if (cleaned.isEmpty()) return
+        save(all().map { if (it.id == id) it.copy(text = cleaned, tags = tags) else it })
+    }
+
+    fun remove(id: String) = save(all().filterNot { it.id == id })
+
     fun markdown(): String = all().joinToString("\n\n---\n\n") {
-        "## ${it.bookTitle}\n\n${it.quote?.let { quote -> "> $quote\n\n" } ?: ""}${it.text}${it.locator?.let { locator -> "\n\n_${locator}_" } ?: ""}"
+        "## ${it.bookTitle}\n\n${it.quote?.let { quote -> "> $quote\n\n" } ?: ""}${it.text}${if (it.tags.isEmpty()) "" else "\n\n${it.tags.joinToString(" ") { tag -> "#$tag" }}"}${it.locator?.let { locator -> "\n\n_${locator}_" } ?: ""}"
     }
 
     private fun save(notes: List<ReadingNote>) {
         val array = JSONArray()
         notes.forEach { note -> array.put(JSONObject().apply {
-            put("id", note.id); put("bookId", note.bookId); put("bookTitle", note.bookTitle); put("text", note.text); put("locator", note.locator); put("createdAt", note.createdAt); put("quote", note.quote); put("color", note.color)
+            put("id", note.id); put("bookId", note.bookId); put("bookTitle", note.bookTitle); put("text", note.text); put("locator", note.locator); put("createdAt", note.createdAt); put("quote", note.quote); put("color", note.color); put("tags", JSONArray(note.tags))
         }) }
         prefs.edit().putString("notes", array.toString()).apply()
     }

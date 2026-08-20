@@ -38,6 +38,7 @@ import com.guiye.reader.library.BookFormat
 import com.guiye.reader.pdf.PdfPageView
 import com.guiye.reader.notes.NoteRepository
 import com.guiye.reader.notes.BookmarkRepository
+import com.guiye.reader.notes.ReadingNote
 import com.guiye.reader.speech.SpeechState
 import com.guiye.reader.opds.OpdsPage
 import kotlinx.coroutines.delay
@@ -113,6 +114,11 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     val notes = remember { NoteRepository(context) }
     var showsNotes by remember { mutableStateOf(false) }
     var noteSearch by remember { mutableStateOf("") }
+    var noteVersion by remember { mutableIntStateOf(0) }
+    var editingNote by remember { mutableStateOf<ReadingNote?>(null) }
+    var noteDraft by remember { mutableStateOf("") }
+    var noteTags by remember { mutableStateOf("") }
+    val noteSnapshot = remember(noteVersion, showsNotes) { notes.all() }
     var showsAISettings by remember { mutableStateOf(false) }
     var showsOpds by remember { mutableStateOf(false) }
     var showsRemote by remember { mutableStateOf(false) }
@@ -206,13 +212,18 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
             title = { Text("阅读笔记") },
             text = { Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 OutlinedTextField(noteSearch, { noteSearch = it }, label = { Text("搜索全部笔记") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                val filteredNotes = notes.all().filter { noteSearch.isBlank() || it.bookTitle.contains(noteSearch, true) || it.text.contains(noteSearch, true) || (it.quote?.contains(noteSearch, true) == true) }
+                val filteredNotes = noteSnapshot.filter { noteSearch.isBlank() || it.bookTitle.contains(noteSearch, true) || it.text.contains(noteSearch, true) || (it.quote?.contains(noteSearch, true) == true) || it.tags.any { tag -> tag.contains(noteSearch, true) } }
                 if (filteredNotes.isEmpty()) Text(if (noteSearch.isBlank()) "还没有笔记" else "没有找到相关笔记", modifier = Modifier.padding(vertical = 20.dp))
                 filteredNotes.forEach { note ->
                     Text(note.bookTitle, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp))
                     note.quote?.let { Text("“$it”", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, maxLines = 3) }
                     Text(note.text)
                     note.locator?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                    if (note.tags.isNotEmpty()) Text(note.tags.joinToString(" ") { "#$it" }, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                    Row {
+                        TextButton(onClick = { editingNote = note; noteDraft = note.text; noteTags = note.tags.joinToString(", ") }) { Text("编辑") }
+                        TextButton(onClick = { notes.remove(note.id); noteVersion++ }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                    }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 }
             } },
@@ -221,6 +232,20 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
                 context.startActivity(android.content.Intent.createChooser(intent, "导出阅读笔记"))
             }) { Text("导出 Markdown") } },
             dismissButton = { TextButton(onClick = { showsNotes = false }) { Text("关闭") } }
+        )
+    }
+    editingNote?.let { note ->
+        AlertDialog(
+            onDismissRequest = { editingNote = null },
+            title = { Text("编辑笔记") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(noteDraft, { noteDraft = it }, label = { Text("笔记") }, minLines = 5, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(noteTags, { noteTags = it }, label = { Text("标签，用逗号分隔") }, modifier = Modifier.fillMaxWidth())
+            } },
+            confirmButton = { TextButton(onClick = {
+                notes.update(note.id, noteDraft, noteTags.split(',').map(String::trim).filter(String::isNotEmpty)); noteVersion++; editingNote = null
+            }, enabled = noteDraft.isNotBlank()) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { editingNote = null }) { Text("取消") } }
         )
     }
     if (showsAISettings) {
@@ -390,8 +415,11 @@ private fun ReaderScreen(vm: ReaderViewModel) {
     var showsSearch by remember { mutableStateOf(false) }
     var showsAppearance by remember { mutableStateOf(false) }
     var showsAnnotation by remember { mutableStateOf(false) }
+    var showsHighlighter by remember { mutableStateOf(false) }
     var annotationDraft by remember { mutableStateOf("") }
+    var annotationTags by remember { mutableStateOf("") }
     var bookmarkVersion by remember { mutableIntStateOf(0) }
+    var readerNoteVersion by remember { mutableIntStateOf(0) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val notes = remember { NoteRepository(context) }
     val bookmarks = remember { BookmarkRepository(context) }
@@ -405,6 +433,7 @@ private fun ReaderScreen(vm: ReaderViewModel) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val bookId = vm.currentBook?.id
     val currentBookmarks = remember(bookId, bookmarkVersion) { bookId?.let(bookmarks::forBook).orEmpty() }
+    val currentHighlights = remember(bookId, readerNoteVersion) { bookId?.let(notes::highlights).orEmpty() }
     val isCurrentBookmarked = currentBookmarks.any { it.paragraphIndex == vm.currentParagraph }
 
     LaunchedEffect(bookId, vm.paragraphs.size) {
@@ -436,7 +465,8 @@ private fun ReaderScreen(vm: ReaderViewModel) {
                 TextButton(onClick = {
                     vm.currentBook?.let { book -> bookmarks.toggle(book, vm.currentParagraph, vm.paragraphs.getOrElse(vm.currentParagraph) { "" }); bookmarkVersion++ }
                 }) { Text(if (isCurrentBookmarked) "已存" else "书签") }
-                TextButton(onClick = { annotationDraft = ""; showsAnnotation = true }) { Text("批注") }
+                TextButton(onClick = { annotationDraft = ""; annotationTags = ""; showsAnnotation = true }) { Text("批注") }
+                TextButton(onClick = { showsHighlighter = true }) { Text("高亮") }
                 TextButton(onClick = { showsSearch = true }) { Text("搜索") }
                 TextButton(onClick = { showsContents = true }) { Text("目录") }
                 TextButton(onClick = { showsAppearance = true }) { Text("Aa") }
@@ -468,6 +498,10 @@ private fun ReaderScreen(vm: ReaderViewModel) {
                 val isBookmarked = currentBookmarks.any { it.paragraphIndex == index }
                 val paragraphColor = when {
                     index == vm.currentParagraph && vm.speechState != SpeechState.IDLE -> MaterialTheme.colorScheme.secondaryContainer
+                    currentHighlights["第 ${index + 1} 段"]?.color == "green" -> Color(0xFFB8E0B8).copy(alpha = 0.48f)
+                    currentHighlights["第 ${index + 1} 段"]?.color == "blue" -> Color(0xFFB8D8F0).copy(alpha = 0.48f)
+                    currentHighlights["第 ${index + 1} 段"]?.color == "pink" -> Color(0xFFF2BDD0).copy(alpha = 0.48f)
+                    currentHighlights.containsKey("第 ${index + 1} 段") -> Color(0xFFFFE58A).copy(alpha = 0.55f)
                     isBookmarked -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                     else -> Color.Transparent
                 }
@@ -541,13 +575,32 @@ private fun ReaderScreen(vm: ReaderViewModel) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(vm.paragraphs.getOrElse(vm.currentParagraph) { "" }, maxLines = 5, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 OutlinedTextField(annotationDraft, { annotationDraft = it }, label = { Text("写下想法") }, minLines = 5, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(annotationTags, { annotationTags = it }, label = { Text("标签，用逗号分隔") }, modifier = Modifier.fillMaxWidth())
             }
         },
         confirmButton = { TextButton(onClick = {
-            vm.currentBook?.let { book -> notes.addAnnotation(book, annotationDraft, vm.paragraphs.getOrElse(vm.currentParagraph) { "" }, "第 ${vm.currentParagraph + 1} 段") }
+            vm.currentBook?.let { book -> notes.addAnnotation(book, annotationDraft, vm.paragraphs.getOrElse(vm.currentParagraph) { "" }, "第 ${vm.currentParagraph + 1} 段", annotationTags.split(',').map(String::trim).filter(String::isNotEmpty)) }
+            annotationTags = ""; readerNoteVersion++
             showsAnnotation = false
         }, enabled = annotationDraft.isNotBlank()) { Text("保存") } },
         dismissButton = { TextButton(onClick = { showsAnnotation = false }) { Text("取消") } }
+    )
+    if (showsHighlighter) AlertDialog(
+        onDismissRequest = { showsHighlighter = false },
+        title = { Text("段落高亮") },
+        text = { Column {
+            listOf("yellow" to "黄色", "green" to "绿色", "blue" to "蓝色", "pink" to "粉色").forEach { (color, label) ->
+                TextButton(onClick = {
+                    vm.currentBook?.let { notes.setHighlight(it, vm.paragraphs.getOrElse(vm.currentParagraph) { "" }, "第 ${vm.currentParagraph + 1} 段", color) }
+                    readerNoteVersion++; showsHighlighter = false
+                }, modifier = Modifier.fillMaxWidth()) { Text(label, modifier = Modifier.fillMaxWidth()) }
+            }
+        } },
+        confirmButton = { TextButton(onClick = {
+            vm.currentBook?.let { notes.setHighlight(it, vm.paragraphs.getOrElse(vm.currentParagraph) { "" }, "第 ${vm.currentParagraph + 1} 段", null) }
+            readerNoteVersion++; showsHighlighter = false
+        }) { Text("移除高亮") } },
+        dismissButton = { TextButton(onClick = { showsHighlighter = false }) { Text("取消") } }
     )
 }
 
