@@ -96,7 +96,8 @@ final class BookRepository: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         let positions = Dictionary(uniqueKeysWithValues: books.map { ($0.id, UserDefaults.standard.integer(forKey: "text.\($0.id)")) })
-        let backup = GuiyeBackup(version: 2, exportedAt: Date(), books: books, notes: NoteStore().notes, bookmarks: BookmarkStore().bookmarks, textPositions: positions)
+        let stats = ReadingStatsStore()
+        let backup = GuiyeBackup(version: 3, exportedAt: Date(), books: books, notes: NoteStore().notes, bookmarks: BookmarkStore().bookmarks, textPositions: positions, readingStats: stats.dailySeconds, goalMinutes: stats.goalMinutes)
         return (try? encoder.encode(backup)) ?? Data("{}".utf8)
     }
 
@@ -109,9 +110,9 @@ final class BookRepository: ObservableObject {
             backup = current
         } else {
             let legacyBooks = try decoder.decode([Book].self, from: data)
-            backup = GuiyeBackup(version: 1, exportedAt: Date(), books: legacyBooks, notes: [], bookmarks: [], textPositions: [:])
+            backup = GuiyeBackup(version: 1, exportedAt: Date(), books: legacyBooks, notes: [], bookmarks: [], textPositions: [:], readingStats: nil, goalMinutes: nil)
         }
-        guard backup.version <= 2 else { throw BackupError.unsupportedVersion }
+        guard backup.version <= 3 else { throw BackupError.unsupportedVersion }
         var restoredBooks = 0
         for imported in backup.books {
             guard let index = books.firstIndex(where: { $0.id == imported.id }) else { continue }
@@ -124,6 +125,7 @@ final class BookRepository: ObservableObject {
         try persist()
         NoteStore().merge(backup.notes)
         BookmarkStore().merge(backup.bookmarks)
+        ReadingStatsStore().merge(daily: backup.readingStats ?? [:], goal: backup.goalMinutes ?? 30)
         backup.textPositions.forEach { UserDefaults.standard.set($0.value, forKey: "text.\($0.key)") }
         return "已合并 \(restoredBooks) 本书的进度、\(backup.notes.count) 条笔记和 \(backup.bookmarks.count) 个书签"
     }

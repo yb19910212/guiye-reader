@@ -87,7 +87,7 @@ class BookRepository(private val context: Context) {
     }
 
     fun backupJson(): String = JSONObject().apply {
-        put("version", 2)
+        put("version", 3)
         put("exportedAt", System.currentTimeMillis())
         put("books", JSONArray().apply { allBooks().forEach { put(it.toJson()) } })
         put("notes", JSONArray(context.getSharedPreferences("guiye_notes", Context.MODE_PRIVATE).getString("notes", "[]")))
@@ -95,11 +95,14 @@ class BookRepository(private val context: Context) {
         put("positions", JSONObject().apply {
             context.getSharedPreferences("guiye_positions", Context.MODE_PRIVATE).all.forEach { (key, value) -> put(key, value) }
         })
+        val stats = context.getSharedPreferences("guiye_reading_stats", Context.MODE_PRIVATE)
+        put("readingStats", JSONObject(stats.getString("daily", "{}")))
+        put("goalMinutes", stats.getInt("goalMinutes", 30))
     }.toString(2)
 
     fun restoreBackup(text: String): Result<String> = runCatching {
         val root = JSONObject(text)
-        require(root.optInt("version", 1) <= 2) { "备份来自更高版本的归页，请先更新 App" }
+        require(root.optInt("version", 1) <= 3) { "备份来自更高版本的归页，请先更新 App" }
         val importedBooks = root.optJSONArray("books") ?: JSONArray()
         val metadata = (0 until importedBooks.length()).mapNotNull { runCatching { Book.fromJson(importedBooks.getJSONObject(it)) }.getOrNull() }.associateBy { it.id }
         var matched = 0
@@ -115,6 +118,12 @@ class BookRepository(private val context: Context) {
             val editor = context.getSharedPreferences("guiye_positions", Context.MODE_PRIVATE).edit()
             positions.keys().forEach { key -> editor.putInt(key, positions.optInt(key, 0)) }
             editor.apply()
+        }
+        root.optJSONObject("readingStats")?.let { importedStats ->
+            val stats = context.getSharedPreferences("guiye_reading_stats", Context.MODE_PRIVATE)
+            val currentStats = runCatching { JSONObject(stats.getString("daily", "{}")) }.getOrDefault(JSONObject())
+            importedStats.keys().forEach { key -> currentStats.put(key, maxOf(currentStats.optLong(key, 0), importedStats.optLong(key, 0))) }
+            stats.edit().putString("daily", currentStats.toString()).putInt("goalMinutes", root.optInt("goalMinutes", stats.getInt("goalMinutes", 30))).apply()
         }
         "已合并 $matched 本书的进度、$noteCount 条笔记和 $bookmarkCount 个书签"
     }

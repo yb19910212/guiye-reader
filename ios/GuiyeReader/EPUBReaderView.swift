@@ -34,6 +34,7 @@ struct EPUBReaderView: View {
     let book: Book
     let onProgress: (Double) -> Void
     @StateObject private var bridge = EPUBReaderBridge()
+    @StateObject private var statsStore = ReadingStatsStore()
     @State private var showsContents = false
     @State private var showsAppearance = false
     @AppStorage("reader.fontSize") private var fontSize = 1.0
@@ -100,9 +101,11 @@ struct EPUBReaderView: View {
                 if bridge.navigator == nil && bridge.error == nil { ProgressView("正在打开 EPUB…") }
                 if let error = bridge.error { ContentUnavailableView("无法打开 EPUB", systemImage: "exclamationmark.triangle", description: Text(error)) }
             }
-            .onDisappear { bridge.navigator?.persistReadingPosition(book: book, onProgress: onProgress) }
+            .onAppear { statsStore.startSession() }
+            .onDisappear { statsStore.stopSession(); bridge.navigator?.persistReadingPosition(book: book, onProgress: onProgress) }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { bridge.navigator?.persistReadingPosition(book: book, onProgress: onProgress) }
+                if phase == .active { statsStore.startSession() }
+                else { statsStore.stopSession(); bridge.navigator?.persistReadingPosition(book: book, onProgress: onProgress) }
             }
     }
 
@@ -232,3 +235,4 @@ private extension EPUBNavigatorViewController {
         apply(decorations: decorations, in: "highlights")
     }
 }
+

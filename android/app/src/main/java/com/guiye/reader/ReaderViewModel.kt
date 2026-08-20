@@ -29,6 +29,7 @@ import com.guiye.reader.opds.OpdsPage
 import com.guiye.reader.remote.WebDavClient
 import com.guiye.reader.remote.WebDavItem
 import androidx.documentfile.provider.DocumentFile
+import com.guiye.reader.stats.ReadingStatsRepository
 
 data class ImportUiState(
     val current: Int = 0,
@@ -52,6 +53,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val opdsCatalog = OpdsCatalog(application)
     private val webDavClient = WebDavClient(application)
     private val positionPrefs = application.getSharedPreferences("guiye_positions", android.content.Context.MODE_PRIVATE)
+    private val readingStats = ReadingStatsRepository(application)
     var books by mutableStateOf(repository.allBooks())
     var currentBook by mutableStateOf<Book?>(null)
     var importError by mutableStateOf<String?>(null)
@@ -224,6 +226,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun backupJson(): String = repository.backupJson()
+    fun startReadingSession() = readingStats.startSession()
+    fun stopReadingSession() = readingStats.stopSession()
 
     fun restoreBackup(uri: android.net.Uri) {
         viewModelScope.launch {
@@ -274,6 +278,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private fun restartIfActive() {
         if (speechState != SpeechState.IDLE) { engine.speak(segments, currentParagraph, selectedVoiceId, rate); speechState = SpeechState.PLAYING }
     }
-    override fun onCleared() { flushTextPosition(); engine.shutdown() }
+    override fun onCleared() { stopReadingSession(); flushTextPosition(); engine.shutdown() }
 }
 

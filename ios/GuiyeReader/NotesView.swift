@@ -79,3 +79,45 @@ struct NotesView: View {
     private var parsedTags: [String] { draftTags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } }
 }
 
+struct ReadingStatsView: View {
+    @StateObject private var store = ReadingStatsStore()
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("今日目标") {
+                    HStack(spacing: 18) {
+                        ProgressView(value: store.todayProgress).progressViewStyle(.circular).scaleEffect(1.5).frame(width: 58, height: 58)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("已阅读 \(Int(store.todaySeconds / 60)) 分钟").font(.headline)
+                            Text("目标 \(store.goalMinutes) 分钟").foregroundStyle(.secondary)
+                        }
+                    }.padding(.vertical, 8)
+                    Stepper("每日目标：\(store.goalMinutes) 分钟", value: $store.goalMinutes, in: 5...180, step: 5)
+                }
+                Section("连续阅读") {
+                    Label("连续 \(store.streak) 天", systemImage: "flame.fill").foregroundStyle(.orange).font(.title3.weight(.semibold))
+                }
+                Section("最近 7 天") {
+                    HStack(alignment: .bottom, spacing: 10) {
+                        let days = store.lastSevenDays
+                        ForEach(days.indices, id: \.self) { index in
+                            let item = days[index]
+                            VStack(spacing: 5) {
+                                Text("\(Int(item.seconds / 60))").font(.caption2).monospacedDigit()
+                                RoundedRectangle(cornerRadius: 4).fill(Color.accentColor)
+                                    .frame(height: CGFloat(max(4, min(100, item.seconds / 60 * 3))))
+                                Text(item.date.formatted(.dateTime.weekday(.narrow))).font(.caption2)
+                            }.frame(maxWidth: .infinity)
+                        }
+                    }.frame(height: 145, alignment: .bottom).padding(.vertical, 8)
+                }
+                Section { Text("仅统计阅读页处于前台的时间；切到后台或退出阅读会立即停止计时。").font(.caption).foregroundStyle(.secondary) }
+            }
+            .navigationTitle("阅读统计")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+}
+

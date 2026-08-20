@@ -5,6 +5,7 @@ struct ReaderView: View {
     @StateObject private var model: ReaderViewModel
     @StateObject private var noteStore = NoteStore()
     @StateObject private var bookmarkStore = BookmarkStore()
+    @StateObject private var statsStore = ReadingStatsStore()
     private let book: Book?
     private let bookID: String?
     private let onProgress: (Double) -> Void
@@ -136,9 +137,11 @@ struct ReaderView: View {
             if currentHighlight != nil { Button("移除高亮", role: .destructive) { setCurrentHighlight(nil) } }
             Button("取消", role: .cancel) {}
         }
-        .onDisappear { persistPositionImmediately() }
+        .onAppear { statsStore.startSession() }
+        .onDisappear { statsStore.stopSession(); persistPositionImmediately() }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { persistPositionImmediately() }
+            if phase == .active { statsStore.startSession() }
+            else { statsStore.stopSession(); persistPositionImmediately() }
         }
     }
 

@@ -7,6 +7,7 @@ struct PDFReaderView: View {
     @State private var pageIndex: Int
     @State private var pageCount = 1
     @State private var displayMode: PDFDisplayMode = .singlePageContinuous
+    @StateObject private var statsStore = ReadingStatsStore()
     @Environment(\.scenePhase) private var scenePhase
 
     init(book: Book, onProgress: @escaping (Double) -> Void = { _ in }) {
@@ -43,8 +44,12 @@ struct PDFReaderView: View {
         .onChange(of: pageIndex) { _, value in
             persistPage(value)
         }
-        .onDisappear { persistPage(pageIndex) }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { persistPage(pageIndex) } }
+        .onAppear { statsStore.startSession() }
+        .onDisappear { statsStore.stopSession(); persistPage(pageIndex) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { statsStore.startSession() }
+            else { statsStore.stopSession(); persistPage(pageIndex) }
+        }
     }
 
     private func persistPage(_ value: Int) {
@@ -108,3 +113,4 @@ private struct PDFKitView: UIViewRepresentable {
         }
     }
 }
+

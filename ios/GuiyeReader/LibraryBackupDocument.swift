@@ -8,6 +8,8 @@ struct GuiyeBackup: Codable {
     let notes: [ReadingNote]
     let bookmarks: [ReadingBookmark]
     let textPositions: [String: Int]
+    let readingStats: [String: Double]?
+    let goalMinutes: Int?
 }
 
 struct LibraryBackupDocument: FileDocument {

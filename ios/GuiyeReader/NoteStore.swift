@@ -132,3 +132,61 @@ final class BookmarkStore: ObservableObject {
     }
 }
 
+@MainActor
+final class ReadingStatsStore: ObservableObject {
+    @Published private(set) var dailySeconds: [String: TimeInterval] = [:]
+    @Published var goalMinutes: Int { didSet { UserDefaults.standard.set(goalMinutes, forKey: goalKey) } }
+    private let recordsKey = "guiye.readingStats.daily"
+    private let goalKey = "guiye.readingStats.goalMinutes"
+    private var sessionStartedAt: Date?
+    private let calendar = Calendar.current
+
+    init() {
+        dailySeconds = (UserDefaults.standard.dictionary(forKey: recordsKey) as? [String: Double]) ?? [:]
+        let savedGoal = UserDefaults.standard.integer(forKey: goalKey)
+        goalMinutes = savedGoal > 0 ? savedGoal : 30
+    }
+
+    func startSession() {
+        guard sessionStartedAt == nil else { return }
+        sessionStartedAt = Date()
+    }
+
+    func stopSession() {
+        guard let started = sessionStartedAt else { return }
+        sessionStartedAt = nil
+        let elapsed = max(0, Date().timeIntervalSince(started))
+        guard elapsed >= 1 else { return }
+        dailySeconds[dateKey(Date()), default: 0] += elapsed
+        UserDefaults.standard.set(dailySeconds, forKey: recordsKey)
+    }
+
+    var todaySeconds: TimeInterval { dailySeconds[dateKey(Date()), default: 0] }
+    var todayProgress: Double { min(todaySeconds / Double(max(goalMinutes, 1) * 60), 1) }
+    var streak: Int {
+        var date = Date()
+        if dailySeconds[dateKey(date), default: 0] < 1 { date = calendar.date(byAdding: .day, value: -1, to: date) ?? date }
+        var count = 0
+        while dailySeconds[dateKey(date), default: 0] >= 1 {
+            count += 1
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: date) else { break }
+            date = previous
+        }
+        return count
+    }
+    var lastSevenDays: [(date: Date, seconds: TimeInterval)] {
+        (0..<7).reversed().compactMap { offset in calendar.date(byAdding: .day, value: -offset, to: Date()).map { ($0, dailySeconds[dateKey($0), default: 0]) } }
+    }
+
+    func merge(daily: [String: TimeInterval], goal: Int) {
+        daily.forEach { dailySeconds[$0.key] = max(dailySeconds[$0.key, default: 0], $0.value) }
+        if goal > 0 { goalMinutes = goal }
+        UserDefaults.standard.set(dailySeconds, forKey: recordsKey)
+    }
+
+    private func dateKey(_ date: Date) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
+    }
+}
+

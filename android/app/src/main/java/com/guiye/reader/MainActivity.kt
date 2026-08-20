@@ -45,6 +45,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import com.guiye.reader.stats.ReadingStatsRepository
 
 private enum class ReaderTheme(val title: String) {
     PAPER("纸张"), SEPIA("暖棕"), FOREST("森林"), NIGHT("夜间");
@@ -73,6 +74,17 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 private fun GuiyeApp(theme: ReaderTheme, onThemeChange: (ReaderTheme) -> Unit, vm: ReaderViewModel = viewModel()) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val activeBookId = vm.currentBook?.id
+    DisposableEffect(lifecycleOwner, activeBookId) {
+        if (activeBookId != null) vm.startReadingSession()
+        val observer = LifecycleEventObserver { _, event ->
+            if (activeBookId != null && event == Lifecycle.Event.ON_RESUME) vm.startReadingSession()
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) vm.stopReadingSession()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); vm.stopReadingSession() }
+    }
     when (vm.currentBook?.format) {
         null -> LibraryScreen(vm, theme, onThemeChange)
         BookFormat.PDF -> PdfReaderScreen(vm, vm.currentBook!!)
@@ -112,6 +124,7 @@ private fun PdfReaderScreen(vm: ReaderViewModel, book: Book) {
 private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange: (ReaderTheme) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val notes = remember { NoteRepository(context) }
+    val readingStats = remember { ReadingStatsRepository(context) }
     var showsNotes by remember { mutableStateOf(false) }
     var noteSearch by remember { mutableStateOf("") }
     var noteVersion by remember { mutableIntStateOf(0) }
@@ -124,6 +137,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     var showsRemote by remember { mutableStateOf(false) }
     var showsThemes by remember { mutableStateOf(false) }
     var showsHistory by remember { mutableStateOf(false) }
+    var showsStats by remember { mutableStateOf(false) }
     var editingBook by remember { mutableStateOf<Book?>(null) }
     var deletingBook by remember { mutableStateOf<Book?>(null) }
     var managing by remember { mutableStateOf(false) }
@@ -153,6 +167,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
             TextButton(onClick = { showsRemote = true }) { Text("网络") }
             TextButton(onClick = { showsNotes = true }) { Text("笔记") }
             TextButton(onClick = { showsHistory = true }) { Text("历史") }
+            TextButton(onClick = { showsStats = true }) { Text("统计") }
             TextButton(onClick = { managing = !managing; if (!managing) selectedIds = emptySet() }) { Text(if (managing) "完成" else "管理") }
             TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
         }) },
@@ -236,6 +251,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
             dismissButton = { TextButton(onClick = { showsNotes = false }) { Text("关闭") } }
         )
     }
+    if (showsStats) ReadingStatsDialog(readingStats) { showsStats = false }
     editingNote?.let { note ->
         AlertDialog(
             onDismissRequest = { editingNote = null },
@@ -411,6 +427,37 @@ private fun formatBytes(bytes: Long): String = when {
 }
 
 @Composable
+private fun ReadingStatsDialog(repository: ReadingStatsRepository, dismiss: () -> Unit) {
+    var goal by remember { mutableIntStateOf(repository.goalMinutes()) }
+    val today = remember { repository.todaySeconds() }
+    val streak = remember { repository.streak() }
+    val days = remember { repository.lastSevenDays() }
+    val weekday = remember { java.text.SimpleDateFormat("E", java.util.Locale.getDefault()) }
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("阅读统计") },
+        text = { Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("今日 ${today / 60} 分钟 · 连续 $streak 天", style = MaterialTheme.typography.titleMedium)
+            LinearProgressIndicator(progress = { (today.toFloat() / (goal * 60)).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+            Text("每日目标：$goal 分钟")
+            Slider(value = goal.toFloat(), onValueChange = { goal = (it / 5).toInt() * 5 }, valueRange = 5f..180f, steps = 34)
+            Row(Modifier.fillMaxWidth().height(130.dp), horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.Bottom) {
+                days.forEach { day ->
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("${day.seconds / 60}", style = MaterialTheme.typography.labelSmall)
+                        Box(Modifier.width(18.dp).height((day.seconds / 60f * 3f).coerceIn(4f, 90f).dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)))
+                        Text(weekday.format(day.date), style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            Text("仅统计阅读页处于前台的时间。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } },
+        confirmButton = { Button(onClick = { repository.setGoalMinutes(goal); dismiss() }) { Text("保存") } },
+        dismissButton = { TextButton(onClick = dismiss) { Text("关闭") } }
+    )
+}
+
+@Composable
 private fun ReaderScreen(vm: ReaderViewModel) {
     var showsVoiceLibrary by remember { mutableStateOf(false) }
     var showsContents by remember { mutableStateOf(false) }
@@ -440,6 +487,7 @@ private fun ReaderScreen(vm: ReaderViewModel) {
 
     LaunchedEffect(bookId, vm.paragraphs.size) {
         if (bookId == null || vm.paragraphs.firstOrNull() == "正在载入正文…") return@LaunchedEffect
+        vm.startReadingSession()
         listState.scrollToItem((vm.currentParagraph + 1).coerceAtMost(vm.paragraphs.size))
         snapshotFlow { listState.firstVisibleItemIndex }
             .distinctUntilChanged()
@@ -451,11 +499,13 @@ private fun ReaderScreen(vm: ReaderViewModel) {
 
     DisposableEffect(lifecycleOwner, bookId) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) vm.flushTextPosition()
+            if (event == Lifecycle.Event.ON_RESUME) vm.startReadingSession()
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) { vm.stopReadingSession(); vm.flushTextPosition() }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            vm.stopReadingSession()
             vm.flushTextPosition()
         }
     }
