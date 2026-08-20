@@ -133,6 +133,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         vm.importBooks(uris)
     }
+    val backupImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::restoreBackup) }
     val folderImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let {
             runCatching { context.contentResolver.takePersistableUriPermission(it, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -145,6 +146,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
                 val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "application/json"; putExtra(android.content.Intent.EXTRA_TEXT, vm.backupJson()) }
                 context.startActivity(android.content.Intent.createChooser(intent, "导出归页备份"))
             }) { Text("备份") }
+            TextButton(onClick = { backupImporter.launch(arrayOf("application/json", "text/json", "text/plain")) }) { Text("恢复") }
             TextButton(onClick = { showsAISettings = true }) { Text("AI") }
             TextButton(onClick = { showsThemes = true }) { Text("主题") }
             TextButton(onClick = { showsOpds = true }) { Text("OPDS") }

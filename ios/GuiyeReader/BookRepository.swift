@@ -95,7 +95,37 @@ final class BookRepository: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        return (try? encoder.encode(books)) ?? Data("[]".utf8)
+        let positions = Dictionary(uniqueKeysWithValues: books.map { ($0.id, UserDefaults.standard.integer(forKey: "text.\($0.id)")) })
+        let backup = GuiyeBackup(version: 2, exportedAt: Date(), books: books, notes: NoteStore().notes, bookmarks: BookmarkStore().bookmarks, textPositions: positions)
+        return (try? encoder.encode(backup)) ?? Data("{}".utf8)
+    }
+
+    @discardableResult
+    func restoreBackup(_ data: Data) throws -> String {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let backup: GuiyeBackup
+        if let current = try? decoder.decode(GuiyeBackup.self, from: data) {
+            backup = current
+        } else {
+            let legacyBooks = try decoder.decode([Book].self, from: data)
+            backup = GuiyeBackup(version: 1, exportedAt: Date(), books: legacyBooks, notes: [], bookmarks: [], textPositions: [:])
+        }
+        guard backup.version <= 2 else { throw BackupError.unsupportedVersion }
+        var restoredBooks = 0
+        for imported in backup.books {
+            guard let index = books.firstIndex(where: { $0.id == imported.id }) else { continue }
+            books[index].title = imported.title
+            books[index].author = imported.author
+            books[index].progress = max(books[index].progress, imported.progress)
+            if let date = imported.lastOpenedAt, date > (books[index].lastOpenedAt ?? .distantPast) { books[index].lastOpenedAt = date }
+            restoredBooks += 1
+        }
+        try persist()
+        NoteStore().merge(backup.notes)
+        BookmarkStore().merge(backup.bookmarks)
+        backup.textPositions.forEach { UserDefaults.standard.set($0.value, forKey: "text.\($0.key)") }
+        return "已合并 \(restoredBooks) 本书的进度、\(backup.notes.count) 条笔记和 \(backup.bookmarks.count) 个书签"
     }
 
     private func importFile(_ source: URL) async throws -> Bool {
@@ -143,3 +173,9 @@ enum ImportError: LocalizedError {
         }
     }
 }
+
+enum BackupError: LocalizedError {
+    case unsupportedVersion
+    var errorDescription: String? { "备份来自更高版本的归页，请先更新 App" }
+}
+

@@ -225,6 +225,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun backupJson(): String = repository.backupJson()
 
+    fun restoreBackup(uri: android.net.Uri) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("无法读取备份文件") }
+                    .fold(onSuccess = repository::restoreBackup, onFailure = { Result.failure(it) })
+            }
+            result.onSuccess { books = repository.allBooks(); importError = it }.onFailure { importError = "恢复失败：${it.message}" }
+        }
+    }
+
     suspend fun loadOpds(url: String, username: String = "", password: String = ""): Result<OpdsPage> = opdsCatalog.load(url, username, password)
 
     fun importOpds(entry: OpdsEntry, username: String = "", password: String = "", completed: (Result<Book>) -> Unit) {

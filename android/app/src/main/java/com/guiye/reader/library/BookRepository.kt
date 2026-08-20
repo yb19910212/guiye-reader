@@ -87,10 +87,50 @@ class BookRepository(private val context: Context) {
     }
 
     fun backupJson(): String = JSONObject().apply {
-        put("version", 1)
+        put("version", 2)
         put("exportedAt", System.currentTimeMillis())
         put("books", JSONArray().apply { allBooks().forEach { put(it.toJson()) } })
+        put("notes", JSONArray(context.getSharedPreferences("guiye_notes", Context.MODE_PRIVATE).getString("notes", "[]")))
+        put("bookmarks", JSONArray(context.getSharedPreferences("guiye_bookmarks", Context.MODE_PRIVATE).getString("bookmarks", "[]")))
+        put("positions", JSONObject().apply {
+            context.getSharedPreferences("guiye_positions", Context.MODE_PRIVATE).all.forEach { (key, value) -> put(key, value) }
+        })
     }.toString(2)
+
+    fun restoreBackup(text: String): Result<String> = runCatching {
+        val root = JSONObject(text)
+        require(root.optInt("version", 1) <= 2) { "备份来自更高版本的归页，请先更新 App" }
+        val importedBooks = root.optJSONArray("books") ?: JSONArray()
+        val metadata = (0 until importedBooks.length()).mapNotNull { runCatching { Book.fromJson(importedBooks.getJSONObject(it)) }.getOrNull() }.associateBy { it.id }
+        var matched = 0
+        save(allBooks().map { current ->
+            metadata[current.id]?.let { imported ->
+                matched++
+                current.copy(title = imported.title, author = imported.author, progress = maxOf(current.progress, imported.progress), lastOpenedAt = maxOf(current.lastOpenedAt ?: 0L, imported.lastOpenedAt ?: 0L).takeIf { it > 0 })
+            } ?: current
+        })
+        val noteCount = mergeArrayPreference("guiye_notes", "notes", root.optJSONArray("notes") ?: JSONArray())
+        val bookmarkCount = mergeArrayPreference("guiye_bookmarks", "bookmarks", root.optJSONArray("bookmarks") ?: JSONArray())
+        root.optJSONObject("positions")?.let { positions ->
+            val editor = context.getSharedPreferences("guiye_positions", Context.MODE_PRIVATE).edit()
+            positions.keys().forEach { key -> editor.putInt(key, positions.optInt(key, 0)) }
+            editor.apply()
+        }
+        "已合并 $matched 本书的进度、$noteCount 条笔记和 $bookmarkCount 个书签"
+    }
+
+    private fun mergeArrayPreference(preferenceName: String, key: String, imported: JSONArray): Int {
+        val target = context.getSharedPreferences(preferenceName, Context.MODE_PRIVATE)
+        val current = runCatching { JSONArray(target.getString(key, "[]")) }.getOrDefault(JSONArray())
+        val ids = (0 until current.length()).mapNotNull { current.optJSONObject(it)?.optString("id") }.toMutableSet()
+        var added = 0
+        for (index in 0 until imported.length()) {
+            val value = imported.optJSONObject(index) ?: continue
+            if (ids.add(value.optString("id"))) { current.put(value); added++ }
+        }
+        target.edit().putString(key, current.toString()).apply()
+        return added
+    }
 
     private fun save(books: List<Book>) {
         val array = JSONArray(); books.distinctBy { it.id }.forEach { array.put(it.toJson()) }
@@ -125,3 +165,4 @@ class BookRepository(private val context: Context) {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }
+

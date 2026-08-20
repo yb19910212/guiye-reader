@@ -14,6 +14,7 @@ struct LibraryView: View {
     @State private var showsRemoteLibrary = false
     @State private var showsThemes = false
     @State private var exportsBackup = false
+    @State private var restoresBackup = false
     @State private var pendingImportURLs: [URL] = []
     @State private var showsHistory = false
     @State private var editingBook: Book?
@@ -40,7 +41,10 @@ struct LibraryView: View {
                 .navigationTitle("归页")
                 .searchable(text: $searchText, prompt: "搜索书名或作者")
                 .toolbar { ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { exportsBackup = true } label: { Label("备份", systemImage: "externaldrive") }
+                    Menu {
+                        Button { exportsBackup = true } label: { Label("导出完整备份", systemImage: "square.and.arrow.up") }
+                        Button { restoresBackup = true } label: { Label("从备份恢复", systemImage: "square.and.arrow.down") }
+                    } label: { Label("数据", systemImage: "externaldrive") }
                     Button { showsAISettings = true } label: { Label("AI", systemImage: "sparkles") }
                     Button { showsThemes = true } label: { Label("主题", systemImage: "paintpalette") }
                     Menu {
@@ -81,6 +85,16 @@ struct LibraryView: View {
                 }
                 .fileExporter(isPresented: $exportsBackup, document: LibraryBackupDocument(data: repository.backupData()), contentType: .json, defaultFilename: "GuiyeReader-Backup") { result in
                     if case .failure(let error) = result { repository.lastError = error.localizedDescription }
+                }
+                .fileImporter(isPresented: $restoresBackup, allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
+                    do {
+                        guard let url = try result.get().first else { return }
+                        let scoped = url.startAccessingSecurityScopedResource()
+                        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                        repository.importNotice = try repository.restoreBackup(Data(contentsOf: url))
+                    } catch {
+                        repository.importNotice = "恢复失败：\(error.localizedDescription)"
+                    }
                 }
         }
         .tint(theme.palette.accent)
@@ -189,3 +203,4 @@ private enum LibraryFilter: CaseIterable { case all, reading, unread, finished
 }
 
 #Preview { LibraryView().environmentObject(ThemeStore()) }
+

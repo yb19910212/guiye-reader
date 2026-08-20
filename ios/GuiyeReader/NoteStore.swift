@@ -69,6 +69,12 @@ final class NoteStore: ObservableObject {
         persist()
     }
 
+    func merge(_ imported: [ReadingNote]) {
+        let existing = Set(notes.map(\.id))
+        notes = (notes + imported.filter { !existing.contains($0.id) }).sorted { $0.createdAt > $1.createdAt }
+        persist()
+    }
+
     var markdown: String {
         notes.map { note in
             let quote = note.quote.map { "> \($0)\n\n" } ?? ""
@@ -116,6 +122,12 @@ final class BookmarkStore: ObservableObject {
         } else {
             bookmarks.insert(ReadingBookmark(id: UUID(), bookID: book.id, bookTitle: book.title, paragraphIndex: paragraphIndex, excerpt: excerpt, createdAt: Date()), at: 0)
         }
+        UserDefaults.standard.set(try? JSONEncoder().encode(bookmarks), forKey: key)
+    }
+
+    func merge(_ imported: [ReadingBookmark]) {
+        let existing = Set(bookmarks.map(\.id))
+        bookmarks = bookmarks + imported.filter { !existing.contains($0.id) }
         UserDefaults.standard.set(try? JSONEncoder().encode(bookmarks), forKey: key)
     }
 }
