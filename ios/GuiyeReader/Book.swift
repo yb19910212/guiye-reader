@@ -11,5 +11,6 @@ struct Book: Identifiable, Codable, Hashable {
     let fileSize: Int64
     let importedAt: Date
     var progress: Double
+    var lastOpenedAt: Date? = nil
     var localURL: URL { URL(fileURLWithPath: localPath) }
 }

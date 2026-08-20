@@ -15,6 +15,10 @@ struct LibraryView: View {
     @State private var showsThemes = false
     @State private var exportsBackup = false
     @State private var pendingImportURLs: [URL] = []
+    @State private var showsHistory = false
+    @State private var editingBook: Book?
+    @State private var selectedBookIDs: Set<String> = []
+    @State private var editMode: EditMode = .inactive
     private var epubType: UTType { UTType(filenameExtension: "epub") ?? .data }
     private var txtType: UTType { UTType(filenameExtension: "txt") ?? .plainText }
 
@@ -45,6 +49,11 @@ struct LibraryView: View {
                         Button { showsOPDS = true } label: { Label("OPDS 书库", systemImage: "books.vertical") }
                     } label: { Label("网络", systemImage: "network") }
                     Button { showsNotes = true } label: { Label("笔记", systemImage: "note.text") }
+                    Button { showsHistory = true } label: { Label("历史", systemImage: "clock.arrow.circlepath") }
+                    Button(editMode.isEditing ? "完成" : "管理") {
+                        editMode = editMode.isEditing ? .inactive : .active
+                        if !editMode.isEditing { selectedBookIDs.removeAll() }
+                    }
                     Button("导入") { importing = true }
                 } }
                 .navigationDestination(item: $selectedBook) { book in
@@ -61,11 +70,33 @@ struct LibraryView: View {
                 .sheet(isPresented: $showsThemes) { ThemeSettingsView().environmentObject(theme) }
                 .sheet(isPresented: $showsOPDS) { OPDSCatalogView(repository: repository) }
                 .sheet(isPresented: $showsRemoteLibrary) { RemoteLibraryView(repository: repository) }
+                .sheet(isPresented: $showsHistory) {
+                    ReadingHistoryView(books: repository.books) { book in
+                        showsHistory = false
+                        openBook(book)
+                    }
+                }
+                .sheet(item: $editingBook) { book in
+                    BookEditorView(book: book) { title, author in repository.updateMetadata(bookID: book.id, title: title, author: author) }
+                }
                 .fileExporter(isPresented: $exportsBackup, document: LibraryBackupDocument(data: repository.backupData()), contentType: .json, defaultFilename: "GuiyeReader-Backup") { result in
                     if case .failure(let error) = result { repository.lastError = error.localizedDescription }
                 }
         }
         .tint(theme.palette.accent)
+        .environment(\.editMode, $editMode)
+        .safeAreaInset(edge: .bottom) {
+            if editMode.isEditing {
+                HStack {
+                    Text("已选择 \(selectedBookIDs.count) 本")
+                    Spacer()
+                    Button("删除", role: .destructive) {
+                        repository.deleteBooks(ids: selectedBookIDs)
+                        selectedBookIDs.removeAll(); editMode = .inactive
+                    }.disabled(selectedBookIDs.isEmpty)
+                }.padding().background(.bar)
+            }
+        }
         .sheet(isPresented: $importing) {
             DocumentPicker(contentTypes: [txtType, .plainText, .text, .pdf, epubType], onPicked: { urls in
                 pendingImportURLs = urls
@@ -94,7 +125,7 @@ struct LibraryView: View {
         ContentUnavailableView { Label("还没有书", systemImage: "books.vertical") } description: { Text(repository.lastError ?? "从文件 App 导入 EPUB、PDF 或 TXT") } actions: { Button("导入第一本书") { importing = true }.buttonStyle(.borderedProminent) }
     }
     private var bookList: some View {
-        List {
+        List(selection: $selectedBookIDs) {
             if let error = repository.lastError { Text(error).foregroundStyle(.red) }
             Section("我的书库") {
                 Picker("筛选", selection: $filter) {
@@ -102,19 +133,40 @@ struct LibraryView: View {
                 }
                 .pickerStyle(.segmented)
                 ForEach(filteredBooks) { book in
-                    Button { selectedBook = book } label: {
-                        HStack(spacing: 14) {
-                            RoundedRectangle(cornerRadius: 6).fill(theme.palette.accent).frame(width: 52, height: 70).overlay(Text(book.format.rawValue.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.white))
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(book.title).font(.headline).foregroundStyle(.primary)
-                                Text("\(book.format.rawValue.uppercased()) · \(ByteCountFormatter.string(fromByteCount: book.fileSize, countStyle: .file))").font(.subheadline).foregroundStyle(.secondary)
-                                ProgressView(value: book.progress)
-                            }
-                        }.padding(.vertical, 5)
+                    Group {
+                        if editMode.isEditing { bookRow(book) }
+                        else { Button { openBook(book) } label: { bookRow(book) } }
+                    }
+                    .tag(book.id)
+                    .swipeActions(edge: .trailing) {
+                        Button("删除", role: .destructive) { repository.deleteBooks(ids: [book.id]) }
+                        Button("编辑") { editingBook = book }.tint(.blue)
+                    }
+                    .contextMenu {
+                        Button("编辑书籍信息") { editingBook = book }
+                        Button("删除", role: .destructive) { repository.deleteBooks(ids: [book.id]) }
                     }
                 }
             }
         }.scrollContentBackground(.hidden)
+    }
+
+    private func openBook(_ book: Book) {
+        repository.markOpened(bookID: book.id)
+        selectedBook = repository.books.first(where: { $0.id == book.id }) ?? book
+    }
+
+    private func bookRow(_ book: Book) -> some View {
+        HStack(spacing: 14) {
+            RoundedRectangle(cornerRadius: 6).fill(theme.palette.accent).frame(width: 52, height: 70)
+                .overlay(Text(book.format.rawValue.uppercased()).font(.caption2.weight(.bold)).foregroundStyle(.white))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(book.title).font(.headline).foregroundStyle(.primary)
+                Text([book.author, book.format.rawValue.uppercased(), ByteCountFormatter.string(fromByteCount: book.fileSize, countStyle: .file)].compactMap { $0 }.joined(separator: " · "))
+                    .font(.subheadline).foregroundStyle(.secondary)
+                ProgressView(value: book.progress)
+            }
+        }.padding(.vertical, 5)
     }
 
     private var filteredBooks: [Book] {

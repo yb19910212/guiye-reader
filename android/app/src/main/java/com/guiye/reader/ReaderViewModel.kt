@@ -143,7 +143,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openBook(book: Book) {
         stopSpeech()
-        currentBook = book
+        repository.markOpened(book.id)
+        books = repository.allBooks()
+        currentBook = books.firstOrNull { it.id == book.id } ?: book
         if (book.format == BookFormat.TXT) {
             paragraphs = listOf("正在载入正文…")
             currentParagraph = 0
@@ -158,6 +160,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             paragraphs = listOf(if (book.format == BookFormat.EPUB) "EPUB 已安全导入本地书库。Readium 导航器正在接入。" else "PDF 已安全导入本地书库。PDF 导航器正在接入。")
             currentParagraph = positionPrefs.getInt("text.${book.id}", 0).coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
         }
+    }
+
+    fun updateBookMetadata(bookId: String, title: String, author: String?) {
+        repository.updateMetadata(bookId, title, author); books = repository.allBooks()
+    }
+
+    fun deleteBooks(ids: Set<String>) {
+        if (currentBook?.id?.let { it in ids } == true) closeBook()
+        repository.deleteBooks(ids); books = repository.allBooks()
     }
 
     fun closeBook() { flushTextPosition(); stopSpeech(); currentBook = null; paragraphs = sampleParagraphs }

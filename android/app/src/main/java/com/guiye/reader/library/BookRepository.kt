@@ -71,6 +71,21 @@ class BookRepository(private val context: Context) {
         save(allBooks().map { if (it.id == bookId) it.copy(progress = progress.coerceIn(0f, 1f)) else it })
     }
 
+    fun markOpened(bookId: String) {
+        save(allBooks().map { if (it.id == bookId) it.copy(lastOpenedAt = System.currentTimeMillis()) else it })
+    }
+
+    fun updateMetadata(bookId: String, title: String, author: String?) {
+        val cleanTitle = title.trim(); if (cleanTitle.isEmpty()) return
+        save(allBooks().map { if (it.id == bookId) it.copy(title = cleanTitle, author = author?.trim()?.ifBlank { null }) else it })
+    }
+
+    fun deleteBooks(ids: Set<String>) {
+        if (ids.isEmpty()) return
+        allBooks().filter { it.id in ids }.forEach { runCatching { File(it.localPath).delete() } }
+        save(allBooks().filterNot { it.id in ids })
+    }
+
     fun backupJson(): String = JSONObject().apply {
         put("version", 1)
         put("exportedAt", System.currentTimeMillis())

@@ -113,6 +113,11 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     var showsOpds by remember { mutableStateOf(false) }
     var showsRemote by remember { mutableStateOf(false) }
     var showsThemes by remember { mutableStateOf(false) }
+    var showsHistory by remember { mutableStateOf(false) }
+    var editingBook by remember { mutableStateOf<Book?>(null) }
+    var deletingBook by remember { mutableStateOf<Book?>(null) }
+    var managing by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
     var searchText by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("all") }
     val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -135,8 +140,18 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
             TextButton(onClick = { showsOpds = true }) { Text("OPDS") }
             TextButton(onClick = { showsRemote = true }) { Text("网络") }
             TextButton(onClick = { showsNotes = true }) { Text("笔记") }
+            TextButton(onClick = { showsHistory = true }) { Text("历史") }
+            TextButton(onClick = { managing = !managing; if (!managing) selectedIds = emptySet() }) { Text(if (managing) "完成" else "管理") }
             TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
         }) },
+        bottomBar = {
+            if (managing) Surface(tonalElevation = 4.dp) {
+                Row(Modifier.navigationBarsPadding().fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("已选择 ${selectedIds.size} 本", Modifier.weight(1f))
+                    Button(onClick = { vm.deleteBooks(selectedIds); selectedIds = emptySet(); managing = false }, enabled = selectedIds.isNotEmpty(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("删除") }
+                }
+            }
+        },
         floatingActionButton = { FloatingActionButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("＋") } }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize().background(MaterialTheme.colorScheme.background).padding(horizontal = 20.dp)) {
@@ -166,7 +181,16 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
                         val queryMatches = searchText.isBlank() || book.title.contains(searchText, true) || book.author?.contains(searchText, true) == true
                         val stateMatches = when (filter) { "reading" -> book.progress > 0f && book.progress < .98f; "unread" -> book.progress == 0f; "finished" -> book.progress >= .98f; else -> true }
                         queryMatches && stateMatches
-                    }.forEach { BookRow(it, vm::openBook) }
+                    }.forEach { book ->
+                        BookRow(
+                            book = book,
+                            selected = book.id in selectedIds,
+                            managing = managing,
+                            open = { if (managing) selectedIds = if (book.id in selectedIds) selectedIds - book.id else selectedIds + book.id else vm.openBook(book) },
+                            edit = { editingBook = book },
+                            delete = { deletingBook = book }
+                        )
+                    }
                     Spacer(Modifier.height(90.dp))
                 }
             }
@@ -221,6 +245,27 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
             } }
         }, confirmButton = { TextButton(onClick = { showsThemes = false }) { Text("完成") } })
     }
+    if (showsHistory) {
+        ReadingHistoryDialog(vm.books, open = { book -> showsHistory = false; vm.openBook(book) }) { showsHistory = false }
+    }
+    editingBook?.let { book ->
+        var title by remember(book.id) { mutableStateOf(book.title) }
+        var author by remember(book.id) { mutableStateOf(book.author.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { editingBook = null }, title = { Text("编辑书籍") },
+            text = { Column { OutlinedTextField(title, { title = it }, label = { Text("书名") }, singleLine = true); OutlinedTextField(author, { author = it }, label = { Text("作者") }, singleLine = true) } },
+            confirmButton = { Button(onClick = { vm.updateBookMetadata(book.id, title, author); editingBook = null }, enabled = title.isNotBlank()) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { editingBook = null }) { Text("取消") } }
+        )
+    }
+    deletingBook?.let { book ->
+        AlertDialog(
+            onDismissRequest = { deletingBook = null }, title = { Text("删除《${book.title}》？") },
+            text = { Text("将同时删除 App 本地书库中的文件，此操作无法撤销。") },
+            confirmButton = { Button(onClick = { vm.deleteBooks(setOf(book.id)); deletingBook = null }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("删除") } },
+            dismissButton = { TextButton(onClick = { deletingBook = null }) { Text("取消") } }
+        )
+    }
 }
 
 @Composable
@@ -272,12 +317,14 @@ private fun OpdsDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
 }
 
 @Composable
-private fun BookRow(book: Book, open: (Book) -> Unit) {
+private fun BookRow(book: Book, selected: Boolean, managing: Boolean, open: () -> Unit, edit: () -> Unit, delete: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable { open(book) },
+        modifier = Modifier.fillMaxWidth().clickable { open() },
         shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .72f)
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (managing) Checkbox(selected, onCheckedChange = { open() })
             Box(Modifier.size(width = 54.dp, height = 72.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(5.dp)), contentAlignment = Alignment.Center) {
                 Text(book.format.name, color = Color.White, style = MaterialTheme.typography.labelMedium)
             }
@@ -286,8 +333,36 @@ private fun BookRow(book: Book, open: (Book) -> Unit) {
                 Text("${book.format.name} · ${formatBytes(book.fileSize)}", color = Color.Gray, modifier = Modifier.padding(top = 5.dp))
                 LinearProgressIndicator(progress = { book.progress }, modifier = Modifier.fillMaxWidth().padding(top = 10.dp))
             }
+            if (!managing) Box {
+                TextButton(onClick = { menu = true }) { Text("⋯") }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("编辑书籍信息") }, onClick = { menu = false; edit() })
+                    DropdownMenuItem(text = { Text("删除") }, onClick = { menu = false; delete() })
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun ReadingHistoryDialog(books: List<Book>, open: (Book) -> Unit, dismiss: () -> Unit) {
+    val history = books.filter { it.lastOpenedAt != null }.sortedByDescending { it.lastOpenedAt }
+    AlertDialog(
+        onDismissRequest = dismiss, title = { Text("阅读历史") },
+        text = { Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+            if (history.isEmpty()) Text("还没有阅读历史，打开一本书后会自动记录。")
+            history.forEach { book ->
+                Surface(Modifier.fillMaxWidth().clickable { open(book) }.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Row { Text(book.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f)); Text("${(book.progress * 100).toInt()}%") }
+                        LinearProgressIndicator(progress = { book.progress }, modifier = Modifier.fillMaxWidth().padding(vertical = 7.dp))
+                        book.lastOpenedAt?.let { Text("上次阅读：${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it))}", style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
+        } },
+        confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
+    )
 }
 
 private fun formatBytes(bytes: Long): String = when {

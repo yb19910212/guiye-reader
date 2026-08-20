@@ -68,6 +68,29 @@ final class BookRepository: ObservableObject {
         try? persist()
     }
 
+    func markOpened(bookID: String) {
+        guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
+        books[index].lastOpenedAt = Date()
+        try? persist()
+    }
+
+    func updateMetadata(bookID: String, title: String, author: String?) {
+        guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
+        let cleanedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedAuthor = author?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanedTitle.isEmpty else { return }
+        books[index].title = cleanedTitle
+        books[index].author = cleanedAuthor?.isEmpty == false ? cleanedAuthor : nil
+        try? persist()
+    }
+
+    func deleteBooks(ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        for book in books where ids.contains(book.id) { try? manager.removeItem(at: book.localURL) }
+        books.removeAll { ids.contains($0.id) }
+        try? persist()
+    }
+
     func backupData() -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
