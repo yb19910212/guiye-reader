@@ -135,7 +135,10 @@ final class BookmarkStore: ObservableObject {
 @MainActor
 final class ReadingStatsStore: ObservableObject {
     @Published private(set) var dailySeconds: [String: TimeInterval] = [:]
-    @Published var goalMinutes: Int { didSet { UserDefaults.standard.set(goalMinutes, forKey: goalKey) } }
+    @Published var goalMinutes: Int { didSet {
+        UserDefaults.standard.set(goalMinutes, forKey: goalKey)
+        Task { await ReadingReminderScheduler.shared.refreshIfEnabled() }
+    } }
     private let recordsKey = "guiye.readingStats.daily"
     private let goalKey = "guiye.readingStats.goalMinutes"
     private var sessionStartedAt: Date?
@@ -223,6 +226,8 @@ final class ReadingPlanStore: ObservableObject {
         }
         persist()
     }
-    private func persist() { UserDefaults.standard.set(try? JSONEncoder().encode(plans), forKey: key) }
+    private func persist() {
+        UserDefaults.standard.set(try? JSONEncoder().encode(plans), forKey: key)
+        Task { await ReadingReminderScheduler.shared.refreshIfEnabled() }
+    }
 }
-

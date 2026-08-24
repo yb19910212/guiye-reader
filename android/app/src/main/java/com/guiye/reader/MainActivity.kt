@@ -47,6 +47,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import com.guiye.reader.stats.ReadingStatsRepository
 import com.guiye.reader.plans.ReadingPlanRepository
+import com.guiye.reader.reminder.ReadingReminderDialog
+import com.guiye.reader.reminder.ReadingReminderScheduler
 
 private enum class ReaderTheme(val title: String) {
     PAPER("纸张"), SEPIA("暖棕"), FOREST("森林"), NIGHT("夜间");
@@ -62,6 +64,7 @@ private enum class ReaderTheme(val title: String) {
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ReadingReminderScheduler.restoreIfEnabled(this)
         enableEdgeToEdge()
         setContent {
             val prefs = remember { getSharedPreferences("guiye_appearance", android.content.Context.MODE_PRIVATE) }
@@ -141,6 +144,8 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     var showsHistory by remember { mutableStateOf(false) }
     var showsStats by remember { mutableStateOf(false) }
     var showsPlans by remember { mutableStateOf(false) }
+    var showsReminder by remember { mutableStateOf(false) }
+    var showsMoreMenu by remember { mutableStateOf(false) }
     var editingBook by remember { mutableStateOf<Book?>(null) }
     var deletingBook by remember { mutableStateOf<Book?>(null) }
     var managing by remember { mutableStateOf(false) }
@@ -159,19 +164,28 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     }
     Scaffold(
         topBar = { TopAppBar(title = { Text("归页") }, actions = {
-            TextButton(onClick = {
-                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "application/json"; putExtra(android.content.Intent.EXTRA_TEXT, vm.backupJson()) }
-                context.startActivity(android.content.Intent.createChooser(intent, "导出归页备份"))
-            }) { Text("备份") }
-            TextButton(onClick = { backupImporter.launch(arrayOf("application/json", "text/json", "text/plain")) }) { Text("恢复") }
-            TextButton(onClick = { showsAISettings = true }) { Text("AI") }
-            TextButton(onClick = { showsThemes = true }) { Text("主题") }
-            TextButton(onClick = { showsOpds = true }) { Text("OPDS") }
-            TextButton(onClick = { showsRemote = true }) { Text("网络") }
-            TextButton(onClick = { showsNotes = true }) { Text("笔记") }
-            TextButton(onClick = { showsHistory = true }) { Text("历史") }
-            TextButton(onClick = { showsStats = true }) { Text("统计") }
-            TextButton(onClick = { showsPlans = true }) { Text("计划") }
+            Box {
+                TextButton(onClick = { showsMoreMenu = true }) { Text("更多") }
+                DropdownMenu(expanded = showsMoreMenu, onDismissRequest = { showsMoreMenu = false }) {
+                    DropdownMenuItem(text = { Text("阅读笔记") }, onClick = { showsMoreMenu = false; showsNotes = true })
+                    DropdownMenuItem(text = { Text("阅读历史") }, onClick = { showsMoreMenu = false; showsHistory = true })
+                    DropdownMenuItem(text = { Text("阅读统计") }, onClick = { showsMoreMenu = false; showsStats = true })
+                    DropdownMenuItem(text = { Text("读完计划") }, onClick = { showsMoreMenu = false; showsPlans = true })
+                    DropdownMenuItem(text = { Text("每日提醒") }, onClick = { showsMoreMenu = false; showsReminder = true })
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Text("AI 设置") }, onClick = { showsMoreMenu = false; showsAISettings = true })
+                    DropdownMenuItem(text = { Text("外观主题") }, onClick = { showsMoreMenu = false; showsThemes = true })
+                    DropdownMenuItem(text = { Text("WebDAV / SMB") }, onClick = { showsMoreMenu = false; showsRemote = true })
+                    DropdownMenuItem(text = { Text("OPDS 书库") }, onClick = { showsMoreMenu = false; showsOpds = true })
+                    HorizontalDivider()
+                    DropdownMenuItem(text = { Text("导出完整备份") }, onClick = {
+                        showsMoreMenu = false
+                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply { type = "application/json"; putExtra(android.content.Intent.EXTRA_TEXT, vm.backupJson()) }
+                        context.startActivity(android.content.Intent.createChooser(intent, "导出归页备份"))
+                    })
+                    DropdownMenuItem(text = { Text("从备份恢复") }, onClick = { showsMoreMenu = false; backupImporter.launch(arrayOf("application/json", "text/json", "text/plain")) })
+                }
+            }
             TextButton(onClick = { managing = !managing; if (!managing) selectedIds = emptySet() }) { Text(if (managing) "完成" else "管理") }
             TextButton(onClick = { importer.launch(arrayOf("text/plain", "application/epub+zip", "application/pdf")) }) { Text("导入") }
         }) },
@@ -257,6 +271,7 @@ private fun LibraryScreen(vm: ReaderViewModel, theme: ReaderTheme, onThemeChange
     }
     if (showsStats) ReadingStatsDialog(readingStats) { showsStats = false }
     if (showsPlans) ReadingPlansDialog(readingPlans, vm.books) { showsPlans = false }
+    if (showsReminder) ReadingReminderDialog { showsReminder = false }
     editingNote?.let { note ->
         AlertDialog(
             onDismissRequest = { editingNote = null },
@@ -790,4 +805,3 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
         confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
     )
 }
-

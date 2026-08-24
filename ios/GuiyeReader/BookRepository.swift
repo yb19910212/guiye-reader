@@ -97,7 +97,8 @@ final class BookRepository: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
         let positions = Dictionary(uniqueKeysWithValues: books.map { ($0.id, UserDefaults.standard.integer(forKey: "text.\($0.id)")) })
         let stats = ReadingStatsStore()
-        let backup = GuiyeBackup(version: 4, exportedAt: Date(), books: books, notes: NoteStore().notes, bookmarks: BookmarkStore().bookmarks, textPositions: positions, readingStats: stats.dailySeconds, goalMinutes: stats.goalMinutes, readingPlans: ReadingPlanStore().plans)
+        let defaults = UserDefaults.standard
+        let backup = GuiyeBackup(version: 5, exportedAt: Date(), books: books, notes: NoteStore().notes, bookmarks: BookmarkStore().bookmarks, textPositions: positions, readingStats: stats.dailySeconds, goalMinutes: stats.goalMinutes, readingPlans: ReadingPlanStore().plans, reminderEnabled: defaults.bool(forKey: "guiye.readingReminder.enabled"), reminderHour: defaults.object(forKey: "guiye.readingReminder.hour") as? Int, reminderMinute: defaults.object(forKey: "guiye.readingReminder.minute") as? Int)
         return (try? encoder.encode(backup)) ?? Data("{}".utf8)
     }
 
@@ -110,9 +111,9 @@ final class BookRepository: ObservableObject {
             backup = current
         } else {
             let legacyBooks = try decoder.decode([Book].self, from: data)
-            backup = GuiyeBackup(version: 1, exportedAt: Date(), books: legacyBooks, notes: [], bookmarks: [], textPositions: [:], readingStats: nil, goalMinutes: nil, readingPlans: nil)
+            backup = GuiyeBackup(version: 1, exportedAt: Date(), books: legacyBooks, notes: [], bookmarks: [], textPositions: [:], readingStats: nil, goalMinutes: nil, readingPlans: nil, reminderEnabled: nil, reminderHour: nil, reminderMinute: nil)
         }
-        guard backup.version <= 4 else { throw BackupError.unsupportedVersion }
+        guard backup.version <= 5 else { throw BackupError.unsupportedVersion }
         var restoredBooks = 0
         for imported in backup.books {
             guard let index = books.firstIndex(where: { $0.id == imported.id }) else { continue }
@@ -127,6 +128,9 @@ final class BookRepository: ObservableObject {
         BookmarkStore().merge(backup.bookmarks)
         ReadingStatsStore().merge(daily: backup.readingStats ?? [:], goal: backup.goalMinutes ?? 30)
         ReadingPlanStore().merge(backup.readingPlans ?? [])
+        if let enabled = backup.reminderEnabled { UserDefaults.standard.set(enabled, forKey: "guiye.readingReminder.enabled") }
+        if let hour = backup.reminderHour { UserDefaults.standard.set(hour, forKey: "guiye.readingReminder.hour") }
+        if let minute = backup.reminderMinute { UserDefaults.standard.set(minute, forKey: "guiye.readingReminder.minute") }
         backup.textPositions.forEach { UserDefaults.standard.set($0.value, forKey: "text.\($0.key)") }
         return "已合并 \(restoredBooks) 本书的进度、\(backup.notes.count) 条笔记和 \(backup.bookmarks.count) 个书签"
     }
@@ -181,4 +185,3 @@ enum BackupError: LocalizedError {
     case unsupportedVersion
     var errorDescription: String? { "备份来自更高版本的归页，请先更新 App" }
 }
-

@@ -87,7 +87,7 @@ class BookRepository(private val context: Context) {
     }
 
     fun backupJson(): String = JSONObject().apply {
-        put("version", 4)
+        put("version", 5)
         put("exportedAt", System.currentTimeMillis())
         put("books", JSONArray().apply { allBooks().forEach { put(it.toJson()) } })
         put("notes", JSONArray(context.getSharedPreferences("guiye_notes", Context.MODE_PRIVATE).getString("notes", "[]")))
@@ -99,11 +99,13 @@ class BookRepository(private val context: Context) {
         put("readingStats", JSONObject(stats.getString("daily", "{}")))
         put("goalMinutes", stats.getInt("goalMinutes", 30))
         put("readingPlans", JSONArray(context.getSharedPreferences("guiye_reading_plans", Context.MODE_PRIVATE).getString("plans", "[]")))
+        val reminder = context.getSharedPreferences("guiye_reading_reminder", Context.MODE_PRIVATE)
+        put("readingReminder", JSONObject().apply { put("enabled", reminder.getBoolean("enabled", false)); put("hour", reminder.getInt("hour", 20)); put("minute", reminder.getInt("minute", 30)) })
     }.toString(2)
 
     fun restoreBackup(text: String): Result<String> = runCatching {
         val root = JSONObject(text)
-        require(root.optInt("version", 1) <= 4) { "备份来自更高版本的归页，请先更新 App" }
+        require(root.optInt("version", 1) <= 5) { "备份来自更高版本的归页，请先更新 App" }
         val importedBooks = root.optJSONArray("books") ?: JSONArray()
         val metadata = (0 until importedBooks.length()).mapNotNull { runCatching { Book.fromJson(importedBooks.getJSONObject(it)) }.getOrNull() }.associateBy { it.id }
         var matched = 0
@@ -127,6 +129,10 @@ class BookRepository(private val context: Context) {
             stats.edit().putString("daily", currentStats.toString()).putInt("goalMinutes", root.optInt("goalMinutes", stats.getInt("goalMinutes", 30))).apply()
         }
         val planCount = mergeReadingPlans(root.optJSONArray("readingPlans") ?: JSONArray())
+        root.optJSONObject("readingReminder")?.let { reminder ->
+            context.getSharedPreferences("guiye_reading_reminder", Context.MODE_PRIVATE).edit()
+                .putBoolean("enabled", reminder.optBoolean("enabled", false)).putInt("hour", reminder.optInt("hour", 20)).putInt("minute", reminder.optInt("minute", 30)).apply()
+        }
         "已合并 $matched 本书的进度、$noteCount 条笔记、$bookmarkCount 个书签和 $planCount 个计划"
     }
 
@@ -191,4 +197,3 @@ class BookRepository(private val context: Context) {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }
-

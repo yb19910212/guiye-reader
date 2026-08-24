@@ -28,6 +28,7 @@ import com.guiye.reader.opds.OpdsEntry
 import com.guiye.reader.opds.OpdsPage
 import com.guiye.reader.remote.WebDavClient
 import com.guiye.reader.remote.WebDavItem
+import com.guiye.reader.reminder.ReadingReminderScheduler
 import androidx.documentfile.provider.DocumentFile
 import com.guiye.reader.stats.ReadingStatsRepository
 
@@ -235,7 +236,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 runCatching { getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("无法读取备份文件") }
                     .fold(onSuccess = repository::restoreBackup, onFailure = { Result.failure(it) })
             }
-            result.onSuccess { books = repository.allBooks(); importError = it }.onFailure { importError = "恢复失败：${it.message}" }
+            result.onSuccess {
+                books = repository.allBooks()
+                ReadingReminderScheduler.restoreIfEnabled(getApplication())
+                importError = it
+            }.onFailure { importError = "恢复失败：${it.message}" }
         }
     }
 
@@ -280,4 +285,3 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
     override fun onCleared() { stopReadingSession(); flushTextPosition(); engine.shutdown() }
 }
-

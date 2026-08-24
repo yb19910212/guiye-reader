@@ -19,6 +19,7 @@ struct LibraryView: View {
     @State private var showsHistory = false
     @State private var showsStats = false
     @State private var showsPlans = false
+    @State private var showsReminder = false
     @State private var editingBook: Book?
     @State private var selectedBookIDs: Set<String> = []
     @State private var editMode: EditMode = .inactive
@@ -44,25 +45,31 @@ struct LibraryView: View {
                 .searchable(text: $searchText, prompt: "搜索书名或作者")
                 .toolbar { ToolbarItemGroup(placement: .topBarTrailing) {
                     Menu {
-                        Button { exportsBackup = true } label: { Label("导出完整备份", systemImage: "square.and.arrow.up") }
-                        Button { restoresBackup = true } label: { Label("从备份恢复", systemImage: "square.and.arrow.down") }
-                    } label: { Label("数据", systemImage: "externaldrive") }
-                    Button { showsAISettings = true } label: { Label("AI", systemImage: "sparkles") }
-                    Button { showsThemes = true } label: { Label("主题", systemImage: "paintpalette") }
-                    Menu {
-                        Button { importing = true } label: { Label("本机 / iCloud / SMB", systemImage: "folder") }
-                        Button { showsRemoteLibrary = true } label: { Label("WebDAV / SMB 文件夹", systemImage: "externaldrive.connected.to.line.below") }
-                        Button { showsOPDS = true } label: { Label("OPDS 书库", systemImage: "books.vertical") }
-                    } label: { Label("网络", systemImage: "network") }
-                    Button { showsNotes = true } label: { Label("笔记", systemImage: "note.text") }
-                    Button { showsHistory = true } label: { Label("历史", systemImage: "clock.arrow.circlepath") }
-                    Button { showsStats = true } label: { Label("统计", systemImage: "chart.bar") }
-                    Button { showsPlans = true } label: { Label("计划", systemImage: "calendar.badge.clock") }
+                        Section("阅读") {
+                            Button { showsNotes = true } label: { Label("笔记", systemImage: "note.text") }
+                            Button { showsHistory = true } label: { Label("历史", systemImage: "clock.arrow.circlepath") }
+                            Button { showsStats = true } label: { Label("统计", systemImage: "chart.bar") }
+                            Button { showsPlans = true } label: { Label("读完计划", systemImage: "calendar.badge.clock") }
+                            Button { showsReminder = true } label: { Label("每日提醒", systemImage: "bell.badge") }
+                        }
+                        Section("设置") {
+                            Button { showsAISettings = true } label: { Label("AI", systemImage: "sparkles") }
+                            Button { showsThemes = true } label: { Label("主题", systemImage: "paintpalette") }
+                        }
+                        Section("数据") {
+                            Button { exportsBackup = true } label: { Label("导出完整备份", systemImage: "square.and.arrow.up") }
+                            Button { restoresBackup = true } label: { Label("从备份恢复", systemImage: "square.and.arrow.down") }
+                        }
+                    } label: { Label("更多", systemImage: "ellipsis.circle") }
                     Button(editMode.isEditing ? "完成" : "管理") {
                         editMode = editMode.isEditing ? .inactive : .active
                         if !editMode.isEditing { selectedBookIDs.removeAll() }
                     }
-                    Button("导入") { importing = true }
+                    Menu {
+                        Button { importing = true } label: { Label("本机 / iCloud / SMB", systemImage: "folder") }
+                        Button { showsRemoteLibrary = true } label: { Label("WebDAV / SMB 文件夹", systemImage: "externaldrive.connected.to.line.below") }
+                        Button { showsOPDS = true } label: { Label("OPDS 书库", systemImage: "books.vertical") }
+                    } label: { Label("导入", systemImage: "square.and.arrow.down") }
                 } }
                 .navigationDestination(item: $selectedBook) { book in
                     if book.format == .pdf {
@@ -86,6 +93,7 @@ struct LibraryView: View {
                 }
                 .sheet(isPresented: $showsStats) { ReadingStatsView() }
                 .sheet(isPresented: $showsPlans) { ReadingPlansView(books: repository.books) }
+                .sheet(isPresented: $showsReminder) { ReadingReminderView() }
                 .sheet(item: $editingBook) { book in
                     BookEditorView(book: book) { title, author in repository.updateMetadata(bookID: book.id, title: title, author: author) }
                 }
@@ -98,6 +106,7 @@ struct LibraryView: View {
                         let scoped = url.startAccessingSecurityScopedResource()
                         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                         repository.importNotice = try repository.restoreBackup(Data(contentsOf: url))
+                        Task { await ReadingReminderScheduler.shared.refreshIfEnabled() }
                     } catch {
                         repository.importNotice = "恢复失败：\(error.localizedDescription)"
                     }
@@ -209,4 +218,3 @@ private enum LibraryFilter: CaseIterable { case all, reading, unread, finished
 }
 
 #Preview { LibraryView().environmentObject(ThemeStore()) }
-

@@ -11,6 +11,9 @@ struct GuiyeBackup: Codable {
     let readingStats: [String: Double]?
     let goalMinutes: Int?
     let readingPlans: [ReadingPlan]?
+    let reminderEnabled: Bool?
+    let reminderHour: Int?
+    let reminderMinute: Int?
 }
 
 struct LibraryBackupDocument: FileDocument {
@@ -21,4 +24,3 @@ struct LibraryBackupDocument: FileDocument {
     init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
 }
-
