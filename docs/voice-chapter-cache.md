@@ -25,3 +25,12 @@ GitHub Actions 运行 iOS Swift 回归、Android 单元测试、双端构建及�
 4. 等待/播放中暂停与恢复、换音色、换章节、清理缓存，旧任务不能接着播放。
 5. 401、429、断网、服务超时、存储空间不足给出可重试错误，正文仍可滚动。
 6. iPhone 17 Pro Max 与 Android 真机长章节、锁屏、前后台及音频尾句人工核验。
+
+## 发布验证（2026-09-17）
+- Build 57 / v0.16.0 (21)，源提交 f15423b587ed8443d640873c167bc1a9728d8b9a。
+- Actions 35197848542：Android、iOS、Release 均成功。Swift 语音/缓存和大 TXT 回归、Android testDebugUnitTest 通过。
+- Build 56 因 SwiftUI 单个表达式类型检查超时失败；拆分状态面板后 Build 57 通过，没有发布失败构建。
+- 从公开 Release 下载最终文件，ZIP 完整性及轻量包检查均通过，iOS Info.plist 确认 0.16.0 / 21。
+- IPA：9,143,776 字节，SHA-256 5aff855b20182fa1436e6b83148c1ede7a52ca14872d41b254c25a3f3c3e0771。
+- APK：21,724,983 字节，SHA-256 e356e190c4f0f6c74b831fdffba2df8c9a96bef1025dcd3eadc16ebfd9a24693。
+- 以上不代表真机试听、锁屏连续播放或模型尾句完整性已经验收。
