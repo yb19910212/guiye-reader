@@ -74,6 +74,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var speechError by mutableStateOf<String?>(null)
         private set
     private var textPositionSaveJob: Job? = null
+    private var speechRestartJob: Job? = null
 
     private val engine: AndroidTtsEngine by lazy {
         AndroidTtsEngine(
@@ -184,7 +185,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun closeBook() { flushTextPosition(); stopSpeech(); currentBook = null; paragraphs = sampleParagraphs; textChapters = TextParser.chapters(sampleParagraphs) }
-    private fun stopSpeech() { engine.stop(); speechState = SpeechState.IDLE }
+    private fun stopSpeech() { speechRestartJob?.cancel(); speechRestartJob = null; engine.stop(); speechState = SpeechState.IDLE }
 
     fun selectParagraph(index: Int) {
         currentParagraph = index.coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
@@ -261,8 +262,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun playOrPause() {
+        if (speechRestartJob != null) { stopSpeech(); return }
         when (speechState) {
-            SpeechState.IDLE -> { engine.speak(segments, currentParagraph, selectedVoiceId, rate); speechState = SpeechState.PLAYING }
+            SpeechState.IDLE -> { speechState = SpeechState.PLAYING; engine.speak(segments, currentParagraph, selectedVoiceId, rate) }
             SpeechState.PLAYING -> { engine.pause(); speechState = SpeechState.PAUSED }
             SpeechState.PAUSED -> { engine.resume(); speechState = SpeechState.PLAYING }
         }
@@ -273,9 +275,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun chooseVoice(id: String?) {
         selectedVoiceId = id
         speechError = null
-        restartIfActive()
+        restartIfActive(200)
     }
     fun previewVoice(voice: SpeechVoice) {
+        speechRestartJob?.cancel(); speechRestartJob = null
         selectedVoiceId = voice.id
         val sample = when {
             voice.languageTag.startsWith("zh") -> "你好，我是归页。愿这段声音陪你读完每一本好书。"
@@ -283,12 +286,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             voice.languageTag.startsWith("ko") -> "안녕하세요. 편안한 목소리로 책을 읽어 드릴게요."
             else -> "Hello, this is Guiye Reader. Enjoy a natural and comfortable reading voice."
         }
-        engine.speak(listOf(SpeechSegment(currentParagraph, sample, voice.languageTag)), 0, voice.id, rate)
         speechState = SpeechState.PLAYING
+        engine.speak(listOf(SpeechSegment(currentParagraph, sample, voice.languageTag)), 0, voice.id, rate)
     }
-    fun updateRate(value: Float) { rate = value; restartIfActive() }
-    private fun restartIfActive() {
-        if (speechState != SpeechState.IDLE) { engine.speak(segments, currentParagraph, selectedVoiceId, rate); speechState = SpeechState.PLAYING }
+    fun updateRate(value: Float) { rate = value; restartIfActive(350) }
+    private fun restartIfActive(waitMs: Long = 0) {
+        speechRestartJob?.cancel(); speechRestartJob = null
+        if (speechState == SpeechState.IDLE) return
+        val wasPlaying = speechState == SpeechState.PLAYING
+        engine.stop()
+        if (!wasPlaying) { speechState = SpeechState.IDLE; return }
+        speechRestartJob = viewModelScope.launch {
+            delay(waitMs.coerceAtLeast(1))
+            speechRestartJob = null
+            engine.speak(segments, currentParagraph, selectedVoiceId, rate)
+        }
     }
     override fun onCleared() { stopReadingSession(); flushTextPosition(); engine.shutdown() }
 }

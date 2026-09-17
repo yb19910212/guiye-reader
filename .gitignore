@@ -20,3 +20,5 @@ downloads/
 android/app/src/main/assets/kokoro-int8-multi-lang-v1_1/
 ios/GuiyeReader/KokoroModel/*
 !ios/GuiyeReader/KokoroModel/.gitkeep
+ios/GuiyeReader/QwenModel/*
+!ios/GuiyeReader/QwenModel/.gitkeep

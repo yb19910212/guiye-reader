@@ -138,7 +138,7 @@ struct ReaderView: View {
             Button("取消", role: .cancel) {}
         }
         .onAppear { statsStore.startSession() }
-        .onDisappear { statsStore.stopSession(); persistPositionImmediately() }
+        .onDisappear { statsStore.stopSession(); persistPositionImmediately(); model.stopSpeech() }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { statsStore.startSession() }
             else { statsStore.stopSession(); persistPositionImmediately() }
@@ -390,6 +390,10 @@ private struct VoiceLibraryView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Qwen 收藏音色 · iOS 实验版") {
+                    Text("1号温柔自然、4号温柔微嗲：以你选定的原始试听作为声音参考，在本机朗读新正文。使用 0.6B 四位量化模型，实际音色与电脑试听可能略有差异。模型较大，首次出声可能较慢，尚需真机验证；遇到等待或发热可切换原有 Kokoro / 系统语音。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Kokoro 开源神经语音") {
                     Text("模型已内置。选择“甜橙、蜜桃、月光、清泉”等音色后，正文始终在设备上生成语音，不上传、不需要网络。首次朗读需要稍等模型载入。")
                         .font(.caption).foregroundStyle(.secondary)
@@ -440,6 +444,7 @@ private struct VoiceLibraryView: View {
 
     private var languageGroups: [VoiceGroup] {
         let grouped = Dictionary(grouping: voices) { voice -> String in
+            if voice.provider == "qwen" { return "Qwen 收藏音色 · 实验版" }
             if voice.isOpenSource { return "Kokoro 开源女声" }
             if voice.languageTag.hasPrefix("zh-CN") { return "普通话" }
             if voice.languageTag.hasPrefix("zh-HK") || voice.languageTag.hasPrefix("yue") { return "粤语" }
@@ -449,7 +454,7 @@ private struct VoiceLibraryView: View {
             if voice.languageTag.hasPrefix("ko") { return "韩语" }
             return "其他语言"
         }
-        let order = ["Kokoro 开源女声", "普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
+        let order = ["Qwen 收藏音色 · 实验版", "Kokoro 开源女声", "普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
         return order.compactMap { key in grouped[key].map { VoiceGroup(key: key, value: $0) } }
     }
 }
@@ -461,4 +466,3 @@ private struct VoiceGroup: Identifiable {
 }
 
 #Preview { ReaderView().environmentObject(ThemeStore()) }
-

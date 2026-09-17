@@ -20,6 +20,7 @@ final class ReaderViewModel: ObservableObject {
     @Published private(set) var speechMessage: String?
     private let engine: SystemSpeechEngine
     private let requestedStartIndex: Int
+    private var speechRestartTask: Task<Void, Never>?
     var voices: [SpeechVoice] { engine.voices }
     private var segments: [SpeechSegment] { paragraphs.enumerated().map { SpeechSegment(id: $0.offset, text: $0.element, languageTag: detectedLanguage(for: $0.element)) } }
 
@@ -37,6 +38,7 @@ final class ReaderViewModel: ObservableObject {
     }
 
     func replaceParagraphs(_ values: [String]) {
+        speechRestartTask?.cancel(); speechRestartTask = nil
         engine.stop()
         playbackState = .idle
         paragraphs = values.isEmpty ? ["文件内容为空"] : values
@@ -56,11 +58,20 @@ final class ReaderViewModel: ObservableObject {
     }
 
     func playOrPause() {
+        if speechRestartTask != nil {
+            speechRestartTask?.cancel(); speechRestartTask = nil
+            engine.stop(); playbackState = .idle
+            return
+        }
         switch playbackState {
-        case .idle: engine.speak(segments: segments, from: currentParagraph, voiceID: selectedVoiceID, rate: rate); playbackState = .playing
+        case .idle: playbackState = .playing; engine.speak(segments: segments, from: currentParagraph, voiceID: selectedVoiceID, rate: rate)
         case .playing: engine.pause(); playbackState = .paused
         case .paused: engine.resume(); playbackState = .playing
         }
+    }
+    func stopSpeech() {
+        speechRestartTask?.cancel(); speechRestartTask = nil
+        engine.stop(); playbackState = .idle
     }
     func previous() { move(to: max(0, currentParagraph - 1)) }
     func next() { move(to: min(paragraphs.count - 1, currentParagraph + 1)) }
@@ -71,22 +82,32 @@ final class ReaderViewModel: ObservableObject {
     func chooseVoice(_ id: String?) {
         selectedVoiceID = id
         speechMessage = nil
-        restartIfActive()
+        restartIfActive(delay: 200_000_000)
     }
     func previewVoice(_ voice: SpeechVoice) {
+        speechRestartTask?.cancel(); speechRestartTask = nil
         selectedVoiceID = voice.id
         let sample: String
         if voice.languageTag.hasPrefix("zh") { sample = "你好，我是归页。愿这段声音陪你读完每一本好书。" }
         else if voice.languageTag.hasPrefix("ja") { sample = "こんにちは。心地よい声で読書を楽しみましょう。" }
         else if voice.languageTag.hasPrefix("ko") { sample = "안녕하세요. 편안한 목소리로 책을 읽어 드릴게요." }
         else { sample = "Hello, this is Guiye Reader. Enjoy a natural and comfortable reading voice." }
-        engine.speak(segments: [SpeechSegment(id: currentParagraph, text: sample, languageTag: voice.languageTag)], from: 0, voiceID: voice.id, rate: rate)
         playbackState = .playing
+        engine.speak(segments: [SpeechSegment(id: currentParagraph, text: sample, languageTag: voice.languageTag)], from: 0, voiceID: voice.id, rate: rate)
     }
-    func updateRate(_ value: Float) { rate = value; restartIfActive() }
-    private func restartIfActive() {
+    func updateRate(_ value: Float) { rate = value; restartIfActive(delay: 350_000_000) }
+    private func restartIfActive(delay: UInt64 = 0) {
+        speechRestartTask?.cancel(); speechRestartTask = nil
         guard playbackState != .idle else { return }
-        engine.speak(segments: segments, from: currentParagraph, voiceID: selectedVoiceID, rate: rate); playbackState = .playing
+        let wasPlaying = playbackState == .playing
+        engine.stop()
+        guard wasPlaying else { playbackState = .idle; return }
+        speechRestartTask = Task { [weak self] in
+            if delay > 0 { try? await Task.sleep(nanoseconds: delay) }
+            guard !Task.isCancelled, let self else { return }
+            self.speechRestartTask = nil
+            self.engine.speak(segments: self.segments, from: self.currentParagraph, voiceID: self.selectedVoiceID, rate: self.rate)
+        }
     }
+    deinit { speechRestartTask?.cancel() }
 }
-

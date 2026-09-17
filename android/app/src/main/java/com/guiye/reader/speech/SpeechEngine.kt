@@ -42,3 +42,36 @@ fun detectLanguage(text: String): String {
         else -> Locale.getDefault().toLanguageTag()
     }
 }
+
+/** Main-thread scheduling; at most current + two future chunks are outstanding. */
+class SpeechPrefetchWindow(val capacity: Int = 3) {
+    init { require(capacity > 0) }
+    var requested = 0; private set
+    var played = 0; private set
+    val canRequest get() = requested - played < capacity
+    fun reserve(): Int? = if (canRequest) requested++ else null
+    fun advance() { if (played < requested) played++ }
+}
+
+class SpeechChunkCursor(private val segments: List<SpeechSegment>, from: Int) {
+    private var paragraph = from.coerceIn(0, segments.size)
+    private var offset = 0
+    fun next(): SpeechSegment? {
+        while (paragraph < segments.size) {
+            val segment = segments[paragraph]
+            if (offset >= segment.text.length) { paragraph++; offset = 0; continue }
+            val count = segment.text.codePointCount(offset, segment.text.length).coerceAtMost(48)
+            val limit = segment.text.offsetByCodePoints(offset, count)
+            var end = limit
+            if (limit < segment.text.length) {
+                val lower = segment.text.offsetByCodePoints(offset, count.coerceAtMost(16))
+                val boundary = (lower until limit).lastOrNull { segment.text[it] in "。！？；，.!?;, \n" }
+                if (boundary != null) end = boundary + 1
+            }
+            val text = segment.text.substring(offset, end)
+            offset = end
+            if (text.isNotBlank()) return segment.copy(text = text)
+        }
+        return null
+    }
+}
