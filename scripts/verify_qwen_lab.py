@@ -8,8 +8,8 @@ import zipfile
 with zipfile.ZipFile(sys.argv[1]) as package:
     base = 'Payload/GuiyeReader.app/'
     info = plistlib.loads(package.read(base + 'Info.plist'))
-    assert info['CFBundleShortVersionString'] == '0.17.0'
-    assert str(info['CFBundleVersion']) == '22'
+    assert info['CFBundleShortVersionString'] == '0.17.1'
+    assert str(info['CFBundleVersion']) == '23'
     names = package.namelist()
     assert not any(name.endswith(('.safetensors', '.onnx')) for name in names)
     assert any(name.endswith('.metallib') for name in names), 'Missing MLX Metal library'

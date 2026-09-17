@@ -1,5 +1,29 @@
 # iOS offline voice lab
 
+## v0.17.1 model import and source selection
+- Select official Hugging Face, explicitly opt into third-party HF Mirror, or enter
+  an HTTPS model-root directory. No silent switch to third-party hosts. Custom
+  roots reject URL credentials/query strings/fragments and are not TTS API URLs.
+- The chosen root must expose `model.safetensors` (1,024,490,700 bytes) and
+  `speech_tokenizer/model.safetensors` (682,293,092 bytes), matching pinned hashes.
+- Alternatively download these two files in a browser/on a computer, transfer to
+  Files, and use the two separately labelled import buttons. They share a basename;
+  choose the right role. ZIP import is not supported. Configs and the repaired
+  tokenizer are supplied by the app, not imported from arbitrary model folders.
+- Copy/hash in 4 MB blocks off MainActor into staging, replace only on correct
+  SHA256, clean staging on cancellation/failure. Preserve old valid target on bad
+  imports. Coordinated/security-scoped reading supports Files providers; cloud
+  providers may still need network to materialize a selected file.
+- Explicit cellular/expensive-network eligibility; device policy still applies.
+  30-second inactivity timeout, 2-hour resource limit, up to two attempts for select
+  transient network failures. Completed valid files are reused; partial individual
+  file downloads do NOT yet resume. Remain in foreground.
+- Status differentiates download/import/test, connection, bytes, and installation.
+  Successful first import may say another file is still missing; it is retained.
+- Existing reader/API/Android behavior unchanged. File helper smoke tests cover
+  successful import, bad hash, cancellation, atomic replacement, cleanup and URLs;
+  not a substitute for Files-provider/phone-network acceptance.
+
 ## Confirmed initialization defect
 The pinned MLX Qwen snapshot `0d6bb6fe33f92d47a507e23b9148940e8366ab5b` has vocab.json,
 merges.txt and tokenizer_config.json, but no tokenizer.json. swift-transformers 1.0.0

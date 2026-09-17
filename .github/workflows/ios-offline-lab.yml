@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/ios-offline-lab.yml'
       - 'ios/GuiyeReader/OfflineVoiceLab.swift'
+      - 'ios/GuiyeReader/OfflineModelFiles.swift'
+      - 'ios/Tests/OfflineModelFilesSmoke.swift'
       - 'scripts/prepare_qwen_model.py'
       - 'scripts/configure_qwen_lab.py'
       - 'scripts/verify_qwen_lab.py'
@@ -36,6 +38,8 @@ jobs:
         run: swift run --package-path scripts/qwen-tokenizer-smoke QwenTokenizerSmoke "$PWD/ios/GuiyeReader/QwenSupport"
       - name: Existing reader regression tests
         run: |
+          xcrun swiftc ios/GuiyeReader/OfflineModelFiles.swift ios/Tests/OfflineModelFilesSmoke.swift -o /tmp/model-files-smoke
+          /tmp/model-files-smoke
           xcrun swiftc ios/GuiyeReader/TXTParser.swift ios/Tests/TXTParserSmoke.swift -o /tmp/txt-smoke
           /tmp/txt-smoke
           xcrun swiftc ios/GuiyeReader/SpeechEngine.swift ios/Tests/SpeechQueueSmoke.swift -o /tmp/queue-smoke
@@ -63,6 +67,8 @@ jobs:
           prerelease: true
           body: |
             独立实验版，非流畅度验收通过的正式版。Android 及现有轻量版不变。
+            v0.17.1：支持两个权重文件分别导入、官方/第三方镜像/自定义 HTTPS 下载源。
+            明确允许蜂窝下载；连接状态、两次有界尝试、校验安装、复用已完成文件。未完成的单个大文件暂不支持断点续传。
             书库 → 更多 → 离线语音实验室：主动下载/校验后可断网测试 1号、4号。
             修复 tokenizer.json 缺失：从固定版本词表生成并通过 Swift/Python 分词一致性检查。
             不内置大模型权重、不自动加载；先校验、后台串行推理、取消/退出释放、状态与耗时显示。
