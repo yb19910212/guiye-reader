@@ -19,4 +19,6 @@
 
 尚未取得 iPhone 17 Pro Max 的崩溃日志，未完成真机快速切换、持续30分钟听书、内存/发热和音质验收；不宣称全部闪退和停顿已消除。
 
+[最终发布文件复验 35174456552](https://github.com/yb19910212/guiye-reader/actions/runs/35174456552) 已通过：从发布页重新下载 IPA/APK，核对完整文件 SHA-256、IPA 版本与最低系统版本、两份 Qwen 权重和两份参考音频哈希、Metal 资源以及原 Kokoro 模型保留。该检查在 GitHub Linux 环境运行，不是手机安装测试。
+
 模型来源：Kokoro / sherpa-onnx、Qwen / MLX 社区量化模型（Apache-2.0）；Swift 接入来源与修改见 vendor/Qwen3TTS/NOTICE.md。
