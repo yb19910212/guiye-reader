@@ -1,6 +1,14 @@
 # iOS offline voice lab
 
 ## v0.17.1 model import and source selection
+- Published as https://github.com/yb19910212/guiye-reader/releases/tag/ios-lab-2
+  from `37a660e7b7cef7b73fc25e323fedc37b2252386b`; Actions `35224102009` succeeded.
+  Actual downloaded IPA v0.17.1 (23), 19,172,665 bytes, revalidated with
+  `verify_qwen_lab.py`; SHA256 matches GitHub:
+  `f1199b4f8799f29924f05320d5e497bb536ba9ae4376394c0c6581b4d873473f`.
+  Import/source, tokenizer parity and existing reader regression tests passed.
+  HF Mirror main-weight HEAD/redirect returned HTTP 200 from this workstation;
+  phone-network downloads and Files-provider UI remain unverified on a device.
 - Select official Hugging Face, explicitly opt into third-party HF Mirror, or enter
   an HTTPS model-root directory. No silent switch to third-party hosts. Custom
   roots reject URL credentials/query strings/fragments and are not TTS API URLs.
