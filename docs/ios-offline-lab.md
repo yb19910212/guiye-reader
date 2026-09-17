@@ -1,6 +1,14 @@
 # iOS offline voice lab
 
 ## v0.17.2 complete bundled edition
+- Published: https://github.com/yb19910212/guiye-reader/releases/tag/ios-lab-4
+  from `f1c7443de77100e8c9df7f2bdcdeef9ca1bfc243`; Actions `35226756816` succeeded.
+  Final Release IPA downloaded and revalidated locally: 1,471,196,365 bytes,
+  SHA256 `6d0d155a03fb96bba8e80eaaa62ed4c35bfea915029321e62d2059ce47ded322`
+  matches GitHub's asset digest. Both packaged weight hashes match pinned upstream.
+  Swift tokenizer parity, model-file regression and reader regression checks passed.
+  Only Release storage is used for the large binary (no duplicate Actions artifact).
+  No physical iPhone runtime acceptance was performed.
 - Both pinned MLX weights (~1.7 GB uncompressed), converted tokenizer/configs,
   original 1/4 reference recordings, model attribution and Apache-2.0 license are
   bundled inside the IPA. Standard Android/lite builds remain unchanged.
