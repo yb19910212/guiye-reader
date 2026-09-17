@@ -116,7 +116,7 @@ jobs:
           name: Guiye Reader ${{ github.ref_type == 'tag' && github.ref_name || format('Build {0}', github.run_number) }}
           generate_release_notes: true
           body: |
-            v0.13.2：内置 Kokoro INT8 中英双语离线神经语音与多款女声，正文不会上传服务器。
+            v0.13.3：内置 Kokoro INT8 中英双语离线神经语音与多款女声，正文不会上传服务器。
 
             - `GuiyeReader-android.apk`：Android Debug 签名安装包
             - `GuiyeReader-unsigned.ipa`：iOS 未签名安装包，需要自行签名

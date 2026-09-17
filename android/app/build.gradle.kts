@@ -11,8 +11,8 @@ android {
         applicationId = "com.guiye.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "0.13.2"
+        versionCode = 18
+        versionName = "0.13.3"
     }
 
     buildFeatures { compose = true }

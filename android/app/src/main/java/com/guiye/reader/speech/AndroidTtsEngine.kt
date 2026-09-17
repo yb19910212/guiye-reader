@@ -67,7 +67,7 @@ class AndroidTtsEngine(
                 override fun onStart(utteranceId: String?) { utteranceId?.toIntOrNull()?.let(onSegmentStarted) }
                 override fun onDone(utteranceId: String?) { if (!paused) mainHandler.post(::playNext) }
                 @Deprecated("Deprecated in Java")
-                override fun onError(utteranceId: String?) = mainHandler.post(::playNext)
+                override fun onError(utteranceId: String?) { mainHandler.post(::playNext) }
             })
         }
         onReady()
