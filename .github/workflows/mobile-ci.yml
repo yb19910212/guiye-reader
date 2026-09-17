@@ -17,13 +17,12 @@ jobs:
   android:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
           cache: gradle
-      - uses: android-actions/setup-android@v3
       - name: Install Android platform
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - uses: gradle/actions/setup-gradle@v4
@@ -56,7 +55,7 @@ jobs:
   ios:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: "16.4"
@@ -114,7 +113,7 @@ jobs:
           name: Guiye Reader ${{ github.ref_type == 'tag' && github.ref_name || format('Build {0}', github.run_number) }}
           generate_release_notes: true
           body: |
-            v0.13.0：内置 Kokoro INT8 中英双语离线神经语音与多款女声，正文不会上传服务器。
+            v0.13.1：内置 Kokoro INT8 中英双语离线神经语音与多款女声，正文不会上传服务器。
 
             - `GuiyeReader-android.apk`：Android Debug 签名安装包
             - `GuiyeReader-unsigned.ipa`：iOS 未签名安装包，需要自行签名
