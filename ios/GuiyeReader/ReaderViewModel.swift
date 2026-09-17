@@ -20,12 +20,13 @@ final class ReaderViewModel: ObservableObject {
     @Published private(set) var speechMessage: String?
     private let engine: SystemSpeechEngine
     private let requestedStartIndex: Int
+    private var chapterTask: Task<Void, Never>?
     private var speechRestartTask: Task<Void, Never>?
     var voices: [SpeechVoice] { engine.voices }
     private var cachedSpeechSegments: [SpeechSegment]?
     private var segments: [SpeechSegment] {
         if let cachedSpeechSegments { return cachedSpeechSegments }
-        let values = paragraphs.enumerated().map { SpeechSegment(id: $0.offset, text: $0.element, languageTag: detectedLanguage(for: $0.element)) }
+        let values = paragraphs.enumerated().map { SpeechSegment(id: $0.offset, text: $0.element, languageTag: "zh-CN") }
         cachedSpeechSegments = values
         return values
     }
@@ -34,13 +35,15 @@ final class ReaderViewModel: ObservableObject {
         let normalizedParagraphs = paragraphs.isEmpty ? ["文件内容为空"] : paragraphs
         self.title = title
         self.paragraphs = normalizedParagraphs
-        self.chapters = TXTParser.chapters(in: normalizedParagraphs)
+        self.chapters = []
         self.engine = engine
         self.requestedStartIndex = startIndex
         self.currentParagraph = min(max(0, startIndex), self.paragraphs.count - 1)
         engine.onSegmentStarted = { [weak self] index in Task { @MainActor in self?.currentParagraph = index } }
         engine.onQueueCompleted = { [weak self] in Task { @MainActor in self?.playbackState = .idle } }
+        engine.onStatus = { [weak self] message in Task { @MainActor in self?.speechMessage = message } }
         engine.onError = { [weak self] message in Task { @MainActor in self?.speechMessage = message; self?.playbackState = .idle } }
+        loadChapters(normalizedParagraphs)
     }
 
     func replaceParagraphs(_ values: [String]) {
@@ -49,8 +52,18 @@ final class ReaderViewModel: ObservableObject {
         playbackState = .idle
         paragraphs = values.isEmpty ? ["文件内容为空"] : values
         cachedSpeechSegments = nil
-        chapters = TXTParser.chapters(in: paragraphs)
+        loadChapters(paragraphs)
         currentParagraph = min(max(0, requestedStartIndex), paragraphs.count - 1)
+    }
+
+    private func loadChapters(_ values: [String]) {
+        chapterTask?.cancel()
+        chapters = []
+        chapterTask = Task { [weak self] in
+            let result = await Task.detached(priority: .utility) { TXTParser.chapters(in: values) }.value
+            guard !Task.isCancelled else { return }
+            self?.chapters = result
+        }
     }
 
     func search(_ query: String, limit: Int = 100) -> [TXTSearchResult] {
@@ -79,6 +92,12 @@ final class ReaderViewModel: ObservableObject {
     func stopSpeech() {
         speechRestartTask?.cancel(); speechRestartTask = nil
         engine.stop(); playbackState = .idle
+    }
+    func moveChapter(_ direction: Int) {
+        let current = chapters.lastIndex(where: { $0.index <= currentParagraph }) ?? 0
+        let next = min(max(0, current + direction), chapters.count - 1)
+        guard chapters.indices.contains(next) else { return }
+        move(to: chapters[next].index)
     }
     func previous() { move(to: max(0, currentParagraph - 1)) }
     func next() { move(to: min(paragraphs.count - 1, currentParagraph + 1)) }
@@ -116,5 +135,5 @@ final class ReaderViewModel: ObservableObject {
             self.engine.speak(segments: self.segments, from: self.currentParagraph, voiceID: self.selectedVoiceID, rate: self.rate)
         }
     }
-    deinit { speechRestartTask?.cancel() }
+    deinit { speechRestartTask?.cancel(); chapterTask?.cancel() }
 }

@@ -18,7 +18,7 @@ struct SpeechVoice: Identifiable, Hashable {
     }
 
     var isOpenSource: Bool { provider == "kokoro" || provider == "qwen" }
-    var qualityRank: Int { isOpenSource ? 4 : (quality == "Premium" ? 3 : (quality == "增强" ? 2 : 1)) }
+    var qualityRank: Int { provider == "api" ? 4 : (quality == "Premium" ? 3 : (quality == "增强" ? 2 : 1)) }
     var languageName: String {
         let locale = Locale(identifier: "zh-Hans")
         return locale.localizedString(forIdentifier: languageTag) ?? languageTag

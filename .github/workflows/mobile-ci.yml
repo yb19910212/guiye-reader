@@ -37,24 +37,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.5.0"
-      - name: Bundle offline Kokoro model
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        run: |
-          curl -L --fail --retry 3 -o /tmp/kokoro.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2
-          echo "a1e94694776049035c4f2c6529f003aaece993c76aae9a78995831c3c4dcafc6  /tmp/kokoro.tar.bz2" | sha256sum -c -
-          mkdir -p android/app/src/main/assets
-          tar -xjf /tmp/kokoro.tar.bz2 -C android/app/src/main/assets
-      - name: Verify offline model with real synthesis
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        run: |
-          python3 -m pip install --disable-pip-version-check sherpa-onnx==1.13.8
-          python3 scripts/verify_kokoro.py android/app/src/main/assets/kokoro-int8-multi-lang-v1_1
       - name: Build debug APK
         working-directory: android
         run: gradle testDebugUnitTest assembleDebug
-      - name: Verify model is inside APK
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        run: unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep 'assets/kokoro-int8-multi-lang-v1_1/model.int8.onnx'
+      - name: Check lightweight package
+        run: python3 scripts/verify_lite_package.py android/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
           name: GuiyeReader-android-debug
@@ -77,13 +64,6 @@ jobs:
         run: |
           xcrun swiftc ios/GuiyeReader/SpeechEngine.swift ios/Tests/SpeechQueueSmoke.swift -o /tmp/speech-queue-smoke
           /tmp/speech-queue-smoke
-      - name: Prepare offline Kokoro model
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        run: |
-          curl -L --fail --retry 3 -o /tmp/kokoro.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2
-          echo "a1e94694776049035c4f2c6529f003aaece993c76aae9a78995831c3c4dcafc6  /tmp/kokoro.tar.bz2" | shasum -a 256 -c -
-          tar -xjf /tmp/kokoro.tar.bz2 -C /tmp
-          cp -R /tmp/kokoro-int8-multi-lang-v1_1/. ios/GuiyeReader/KokoroModel/
       - name: Build unsigned device app
         run: >-
           xcodebuild -project ios/GuiyeReader.xcodeproj
@@ -91,23 +71,14 @@ jobs:
           -sdk iphoneos -destination 'generic/platform=iOS'
           CONFIGURATION_BUILD_DIR="$PWD/ios/build-unsigned"
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
-      - name: Bundle pinned Qwen experiment model
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        run: python3 scripts/prepare_qwen_model.py ios/build-unsigned/GuiyeReader.app/QwenModel
-      - name: Verify model is inside app
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-        run: |
-          test -s ios/build-unsigned/GuiyeReader.app/KokoroModel/model.int8.onnx
-          test -s ios/build-unsigned/GuiyeReader.app/QwenModel/model.safetensors
-          cmp ios/GuiyeReader/VoiceReferences/gentle.wav ios/build-unsigned/GuiyeReader.app/VoiceReferences/gentle.wav
-          cmp ios/GuiyeReader/VoiceReferences/coaxing.wav ios/build-unsigned/GuiyeReader.app/VoiceReferences/coaxing.wav
-          test -n "$(find ios/build-unsigned/GuiyeReader.app -name '*.metallib' -print -quit)"
       - name: Package unsigned IPA
         run: |
           mkdir -p ios/package/Payload
           cp -R ios/build-unsigned/GuiyeReader.app ios/package/Payload/
           cd ios/package
           zip -qry ../GuiyeReader-unsigned.ipa Payload
+      - name: Check lightweight package
+        run: python3 scripts/verify_lite_package.py ios/GuiyeReader-unsigned.ipa
       - uses: actions/upload-artifact@v4
         with:
           name: GuiyeReader-ios-unsigned
@@ -137,17 +108,13 @@ jobs:
           generate_release_notes: true
           prerelease: true
           body: |
-            v0.14.0 实验版：保留 Kokoro / 系统语音，iOS 新增 1号温柔自然、4号温柔微嗲参考音色。
-
-            - iOS 18+：内置 Qwen 0.6B Base 4bit，用原始试听参考生成新正文；音色可能与桌面试听不同
-            - 双端增加有界预生成、过期回调过滤、长段切分与语速防抖
-            - iOS/Android 真机切换压力、连续听书和音质验收尚未完成，不宣称已消除全部闪退或停顿
-            - Android 本版保留 Kokoro，Qwen 后续跟进
-
-            - `GuiyeReader-android.apk`：Android Debug 签名安装包
-            - `GuiyeReader-unsigned.ipa`：iOS 未签名安装包，需要自行签名
-            - 离线模型来自 sherpa-onnx / Kokoro，Apache-2.0 许可
-            - Qwen / MLX 社区量化模型采用 Apache-2.0 许可；运行时不下载模型、不上传正文
+            v0.15.0 外置 API 语音轻量版
+            - 双端移除 Qwen / Kokoro 推理依赖与内置模型，保留系统朗读
+            - HTTPS API 设置、设备安全密钥存储、1号和4号音色、可取消的有界预取
+            - 明确显示服务器等待状态；生成速度由 NAS 决定，不承诺无间断朗读
+            - TXT 章节选择、前后章跳转；保留 EPUB 原生目录
+            - 本版尚需 iOS / Android 真机滚动、切换、后台播放验收
+            - iOS 为未签名 IPA，Android 为 Debug 签名 APK
           files: |
             release/GuiyeReader-android.apk
             release/GuiyeReader-unsigned.ipa

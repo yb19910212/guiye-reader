@@ -11,8 +11,8 @@ android {
         applicationId = "com.guiye.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "0.14.0"
+        versionCode = 20
+        versionName = "0.15.0"
     }
 
     buildFeatures { compose = true }
@@ -37,7 +37,6 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.k2fsa:sherpa-onnx:1.13.8@aar")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")

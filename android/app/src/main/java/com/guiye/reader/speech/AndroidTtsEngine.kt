@@ -8,33 +8,26 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import com.k2fsa.sherpa.onnx.OfflineTts
-import com.k2fsa.sherpa.onnx.OfflineTtsConfig
-import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
-import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.math.roundToInt
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaType
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
-private const val KOKORO_MODEL_DIR = "kokoro-int8-multi-lang-v1_1"
 
 // App-lifetime runtime: no second native model and no release during inference.
-private object KokoroRuntime {
+private object RemoteRuntime {
     val executor = Executors.newSingleThreadExecutor()
-    var model: OfflineTts? = null // Access exclusively on executor.
 }
 
-private val kokoroVoices = listOf(
-    SpeechVoice("kokoro:3", "甜橙 · 中文女声", "zh-CN", false, 500, "kokoro"),
-    SpeechVoice("kokoro:8", "蜜桃 · 中文女声", "zh-CN", false, 500, "kokoro"),
-    SpeechVoice("kokoro:20", "月光 · 中文女声", "zh-CN", false, 500, "kokoro"),
-    SpeechVoice("kokoro:40", "清泉 · 中文女声", "zh-CN", false, 500, "kokoro"),
-    SpeechVoice("kokoro:0", "Maple · 英语女声", "en-US", false, 500, "kokoro"),
-    SpeechVoice("kokoro:1", "Sol · 英语女声", "en-US", false, 500, "kokoro")
+private val remoteVoices = listOf(
+    SpeechVoice("api:1", "温柔自然 · 1号", "zh-CN", true, 500, "api"),
+    SpeechVoice("api:4", "温柔微嗲 · 4号", "zh-CN", true, 500, "api")
 )
 
 class AndroidTtsEngine(
@@ -42,7 +35,8 @@ class AndroidTtsEngine(
     private val onSegmentStarted: (Int) -> Unit,
     private val onQueueCompleted: () -> Unit,
     private val onReady: () -> Unit,
-    private val onError: (String) -> Unit
+    private val onError: (String) -> Unit,
+    private val onStatus: (String?) -> Unit = {}
 ) : SpeechEngine, TextToSpeech.OnInitListener {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -65,9 +59,12 @@ class AndroidTtsEngine(
     private var window = SpeechPrefetchWindow()
     private val ready = mutableMapOf<Int, Pair<SpeechSegment, File>>()
     private var sourceEnded = false
+    @Volatile private var activeCall: okhttp3.Call? = null
+    private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
+        .connectTimeout(15, TimeUnit.SECONDS).readTimeout(300, TimeUnit.SECONDS).callTimeout(330, TimeUnit.SECONDS).build()
 
     override val voices: List<SpeechVoice>
-        get() = kokoroVoices + if (!initialized) emptyList() else tts.voices.orEmpty()
+        get() = remoteVoices + if (!initialized) emptyList() else tts.voices.orEmpty()
             .sortedWith(compareByDescending<android.speech.tts.Voice> { it.quality }
                 .thenBy { if (it.locale.language in setOf("zh", "en", "ja", "ko")) 0 else 1 }
                 .thenBy { it.locale.displayLanguage }.thenBy { it.name })
@@ -106,25 +103,26 @@ class AndroidTtsEngine(
         if (closed) return
         stop()
         if (segments.isEmpty()) { onQueueCompleted(); return }
-        if (!initialized && voiceId?.startsWith("kokoro:") != true) { onError("系统语音尚未就绪，请稍后重试"); return }
+        if (!initialized && voiceId?.startsWith("api:") != true) { onError("系统语音尚未就绪，请稍后重试"); return }
         queue = segments
         currentIndex = startIndex.coerceIn(0, segments.lastIndex)
         selectedVoiceId = voiceId
         selectedRate = rate
         paused = false
-        if (voiceId?.startsWith("kokoro:") == true) cursor = SpeechChunkCursor(segments, currentIndex)
+        if (voiceId?.startsWith("api:") == true) cursor = SpeechChunkCursor(segments, currentIndex)
         playCurrent()
     }
 
     private fun playCurrent() {
         val segment = queue.getOrNull(currentIndex) ?: run { onQueueCompleted(); return }
-        if (selectedVoiceId?.startsWith("kokoro:") == true) {
+        if (selectedVoiceId?.startsWith("api:") == true) {
             pumpOffline()
             return
         }
         val explicit = tts.voices.orEmpty().firstOrNull { it.name == selectedVoiceId }
-        tts.language = Locale.forLanguageTag(segment.languageTag)
-        (explicit ?: tts.voices.orEmpty().firstOrNull { it.locale.toLanguageTag().startsWith(segment.languageTag.substringBefore('-')) })?.let { tts.voice = it }
+        val language = detectLanguage(segment.text)
+        tts.language = Locale.forLanguageTag(language)
+        (explicit ?: tts.voices.orEmpty().firstOrNull { it.locale.toLanguageTag().startsWith(language.substringBefore('-')) })?.let { tts.voice = it }
         tts.setSpeechRate(selectedRate)
         val id = "guiye-${++utteranceSequence}"
         activeUtteranceId = id
@@ -144,20 +142,55 @@ class AndroidTtsEngine(
 
     private fun synthesizeOffline(segment: SpeechSegment, part: Int) {
         val token = session
-        val sid = selectedVoiceId.orEmpty().removePrefix("kokoro:").toIntOrNull() ?: 3
-        val speed = selectedRate.coerceIn(0.6f, 1.6f)
-        KokoroRuntime.executor.execute {
+        val voice = if (selectedVoiceId == "api:4") "4" else "1"
+        val settings = RemoteSpeechSettings(appContext)
+        val address = settings.address
+        val key = settings.key
+        onStatus("正在准备远程语音，可继续阅读；NAS 生成可能需要几十秒")
+        RemoteRuntime.executor.execute {
             if (token.get()) return@execute
             runCatching {
-                val engine = KokoroRuntime.model ?: createOfflineTts().also { KokoroRuntime.model = it }
+                require(key.isNotBlank()) { "请先保存服务器地址和 API 密钥" }
+                val url = RemoteSpeechSettings.endpoint(address)
+                val body = JSONObject().put("model", "qwen3-tts-0.6b").put("input", segment.text)
+                    .put("voice", voice).put("response_format", "wav").put("speed", 1)
+                var payload: ByteArray? = null
+                for (attempt in 0 until 16) {
+                    if (token.get()) return@execute
+                    val request = Request.Builder().url(url).header("Authorization", "Bearer $key")
+                        .post(body.toString().toRequestBody("application/json".toMediaType())).build()
+                    val call = client.newCall(request)
+                    activeCall = call
+                    if (token.get()) { call.cancel(); return@execute }
+                    call.execute().use { response ->
+                        if (response.code == 429 && attempt < 15) {
+                            // bounded cancellable retry; the NAS admits only one generator
+                        } else {
+                            check(response.code == 200) {
+                                if (response.code == 401) "API 密钥无效" else "语音服务器返回 HTTP ${response.code}"
+                            }
+                            val stream = response.body?.byteStream() ?: error("音频为空")
+                            val output = java.io.ByteArrayOutputStream()
+                            val buffer = ByteArray(8192)
+                            while (true) {
+                                if (token.get()) return@execute
+                                val count = stream.read(buffer)
+                                if (count < 0) break
+                                check(output.size() + count <= 8 * 1024 * 1024) { "音频超出大小限制" }
+                                output.write(buffer, 0, count)
+                            }
+                            payload = output.toByteArray()
+                        }
+                    }
+                    activeCall = null
+                    if (payload != null) break
+                    repeat(20) { if (token.get()) return@execute; Thread.sleep(100) }
+                }
+                val data = payload ?: error("服务器繁忙，请稍后重试")
+                check(data.size > 44 && String(data, 0, 4, Charsets.US_ASCII) == "RIFF") { "服务器未返回有效 WAV 音频" }
                 if (token.get()) return@execute
-                require(sid in 0 until engine.numSpeakers()) { "音色编号不受当前模型支持" }
-                val audio = engine.generateWithCallback(segment.text, sid, speed) { if (token.get()) 0 else 1 }
-                if (token.get()) return@execute
-                require(audio.samples.isNotEmpty() && audio.samples.all { it.isFinite() }) { "模型没有生成有效音频" }
-                File.createTempFile("kokoro-", ".wav", appContext.cacheDir).apply {
-                    try { writeBytes(wavData(audio.samples, audio.sampleRate)) }
-                    catch (error: Exception) { delete(); throw error }
+                File.createTempFile("remote-tts-", ".wav", appContext.cacheDir).apply {
+                    try { writeBytes(data) } catch (error: Exception) { delete(); throw error }
                 }
             }.onSuccess { file ->
                 mainHandler.post {
@@ -166,7 +199,7 @@ class AndroidTtsEngine(
                     startReadyAudio()
                 }
             }.onFailure { error ->
-                mainHandler.post { if (!closed && session === token && !token.get()) fail("离线语音生成失败：${error.localizedMessage}") }
+                mainHandler.post { if (!closed && session === token && !token.get()) fail("远程语音生成失败：${error.localizedMessage}") }
             }
         }
     }
@@ -191,8 +224,8 @@ class AndroidTtsEngine(
                 if (player === prepared && session === token && !token.get()) {
                     playerPrepared = true
                     if (!paused) {
-                        runCatching { prepared.start(); onSegmentStarted(segment.id) }
-                            .onFailure { fail("离线语音播放失败：${it.localizedMessage}") }
+                        runCatching { prepared.playbackParams = prepared.playbackParams.setSpeed(selectedRate.coerceIn(0.6f, 1.6f)); prepared.start(); onStatus(null); onSegmentStarted(segment.id) }
+                            .onFailure { fail("远程语音播放失败：${it.localizedMessage}") }
                     }
                 }
             }
@@ -204,39 +237,11 @@ class AndroidTtsEngine(
                 }
             }
             next.setOnErrorListener { failed, _, _ ->
-                if (player === failed && session === token && !token.get()) fail("离线语音播放失败")
+                if (player === failed && session === token && !token.get()) fail("远程语音播放失败")
                 true
             }
             next.prepareAsync()
-        } catch (error: Exception) { fail("离线语音播放失败：${error.localizedMessage}") }
-    }
-
-    private fun createOfflineTts(): OfflineTts {
-        val base = KOKORO_MODEL_DIR
-        val kokoro = OfflineTtsKokoroModelConfig(
-            model = "$base/model.int8.onnx",
-            voices = "$base/voices.bin",
-            tokens = "$base/tokens.txt",
-            dataDir = "$base/espeak-ng-data",
-            lexicon = "$base/lexicon-us-en.txt,$base/lexicon-zh.txt"
-        )
-        val config = OfflineTtsConfig(
-            model = OfflineTtsModelConfig(kokoro = kokoro, numThreads = 4, debug = false),
-            ruleFsts = "$base/date-zh.fst,$base/phone-zh.fst,$base/number-zh.fst",
-            maxNumSentences = 1
-        )
-        return OfflineTts(appContext.assets, config)
-    }
-
-    private fun wavData(samples: FloatArray, sampleRate: Int): ByteArray {
-        val dataSize = samples.size * 2
-        return ByteBuffer.allocate(44 + dataSize).order(ByteOrder.LITTLE_ENDIAN).apply {
-            put("RIFF".toByteArray()); putInt(36 + dataSize); put("WAVE".toByteArray())
-            put("fmt ".toByteArray()); putInt(16); putShort(1.toShort()); putShort(1.toShort())
-            putInt(sampleRate); putInt(sampleRate * 2); putShort(2.toShort()); putShort(16.toShort())
-            put("data".toByteArray()); putInt(dataSize)
-            samples.forEach { putShort((it.coerceIn(-1f, 1f) * 32767f).roundToInt().toShort()) }
-        }.array()
+        } catch (error: Exception) { fail("远程语音播放失败：${error.localizedMessage}") }
     }
 
     private fun playNext() {
@@ -260,7 +265,7 @@ class AndroidTtsEngine(
 
     override fun pause() {
         paused = true
-        if (selectedVoiceId?.startsWith("kokoro:") == true) {
+        if (selectedVoiceId?.startsWith("api:") == true) {
             if (playerPrepared) player?.runCatching { pause() }
         } else { activeUtteranceId = null; tts.stop() }
     }
@@ -269,7 +274,7 @@ class AndroidTtsEngine(
         if (!paused) return
         paused = false
         val existing = player
-        if (selectedVoiceId?.startsWith("kokoro:") == true) {
+        if (selectedVoiceId?.startsWith("api:") == true) {
             if (existing != null && playerPrepared) {
                 runCatching { existing.start(); playingSegmentId?.let(onSegmentStarted) }.onFailure { fail("恢复播放失败，请重试") }
             }
@@ -279,6 +284,8 @@ class AndroidTtsEngine(
 
     override fun stop() {
         session.set(true)
+        activeCall?.cancel(); activeCall = null
+        onStatus(null)
         session = AtomicBoolean(false)
         paused = false
         activeUtteranceId = null

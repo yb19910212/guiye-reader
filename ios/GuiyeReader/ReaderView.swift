@@ -110,7 +110,7 @@ struct ReaderView: View {
                     Button { showsHighlighter = true } label: { Image(systemName: currentHighlight == nil ? "highlighter" : "highlighter") }
                         .disabled(book == nil)
                     Button { showsSearch = true } label: { Image(systemName: "magnifyingglass") }
-                    Button { showsContents = true } label: { Image(systemName: "list.bullet") }
+                    Button("章节") { showsContents = true }
                     Button("Aa") { showsAppearance = true }.font(.headline)
                 }
             }
@@ -147,6 +147,14 @@ struct ReaderView: View {
 
     private var speechControls: some View {
         VStack(spacing: 8) {
+            HStack {
+                Button("上一章") { model.moveChapter(-1) }
+                Spacer()
+                Button("章节选择") { showsContents = true }
+                Spacer()
+                Button("下一章") { model.moveChapter(1) }
+            }
+            if let message = model.speechMessage { Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
             HStack {
                 Button("上一段", action: model.previous)
                 Spacer()
@@ -378,6 +386,9 @@ private struct VoiceLibraryView: View {
     @ObservedObject var model: ReaderViewModel
     @State private var query = ""
     @State private var highQualityOnly = true
+    @State private var apiAddress = RemoteSpeechSettings.address
+    @State private var apiKey = RemoteSpeechSettings.key
+    @State private var settingsMessage = ""
     @Environment(\.dismiss) private var dismiss
 
     private var voices: [SpeechVoice] {
@@ -390,20 +401,18 @@ private struct VoiceLibraryView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Qwen 收藏音色 · iOS 实验版") {
-                    Text("1号温柔自然、4号温柔微嗲：以你选定的原始试听作为声音参考，在本机朗读新正文。使用 0.6B 四位量化模型，实际音色与电脑试听可能略有差异。模型较大，首次出声可能较慢，尚需真机验证；遇到等待或发热可切换原有 Kokoro / 系统语音。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("Qwen 暂限前台使用，离开前台会停止；锁屏听书请选择原有 Kokoro 或系统语音。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Kokoro 开源神经语音") {
-                    Text("模型已内置。选择“甜橙、蜜桃、月光、清泉”等音色后，正文始终在设备上生成语音，不上传、不需要网络。首次朗读需要稍等模型载入。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let message = model.speechMessage {
-                        Text(message).font(.caption).foregroundStyle(Color.red)
+                Section("外置 API 语音 · 轻量版") {
+                    TextField("HTTPS 服务器地址", text: $apiAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    SecureField("API 密钥", text: $apiKey).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("保存连接设置") {
+                        model.stopSpeech()
+                        do { try RemoteSpeechSettings.save(address: apiAddress, key: apiKey); settingsMessage = "已保存，选择 1 号或 4 号试听" }
+                        catch { settingsMessage = error.localizedDescription }
                     }
-                    Text("Kokoro INT8 模型与 sherpa-onnx 均采用 Apache-2.0 许可。")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    if !settingsMessage.isEmpty { Text(settingsMessage).font(.caption) }
+                    Text("仅主动朗读或试听时，所选正文会发送到你设置的服务器。手机不再加载本地大模型。系统语音仍可独立使用。NAS 当前生成慢于播放，分段等待不代表 App 卡死。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let message = model.speechMessage { Text(message).font(.caption).foregroundStyle(.secondary) }
                 }
                 Section {
                     Button {
@@ -446,8 +455,7 @@ private struct VoiceLibraryView: View {
 
     private var languageGroups: [VoiceGroup] {
         let grouped = Dictionary(grouping: voices) { voice -> String in
-            if voice.provider == "qwen" { return "Qwen 收藏音色 · 实验版" }
-            if voice.isOpenSource { return "Kokoro 开源女声" }
+            if voice.provider == "api" { return "外置 API 音色" }
             if voice.languageTag.hasPrefix("zh-CN") { return "普通话" }
             if voice.languageTag.hasPrefix("zh-HK") || voice.languageTag.hasPrefix("yue") { return "粤语" }
             if voice.languageTag.hasPrefix("zh-TW") { return "台语 / 繁体中文" }
@@ -456,7 +464,7 @@ private struct VoiceLibraryView: View {
             if voice.languageTag.hasPrefix("ko") { return "韩语" }
             return "其他语言"
         }
-        let order = ["Qwen 收藏音色 · 实验版", "Kokoro 开源女声", "普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
+        let order = ["外置 API 音色", "普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
         return order.compactMap { key in grouped[key].map { VoiceGroup(key: key, value: $0) } }
     }
 }

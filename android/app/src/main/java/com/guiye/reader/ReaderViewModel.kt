@@ -68,7 +68,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var cachedSpeechSegments: List<SpeechSegment> = emptyList()
     private val segments: List<SpeechSegment> get() {
         if (cachedSpeechParagraphs !== paragraphs) {
-            cachedSpeechSegments = paragraphs.mapIndexed { i, text -> SpeechSegment(i, text, detectLanguage(text)) }
+            cachedSpeechSegments = paragraphs.mapIndexed { i, text -> SpeechSegment(i, text, "zh-CN") }
             cachedSpeechParagraphs = paragraphs
         }
         return cachedSpeechSegments
@@ -90,7 +90,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             onSegmentStarted = { selectParagraph(it) },
             onQueueCompleted = { speechState = SpeechState.IDLE },
             onReady = { voices = engineVoices() },
-            onError = { message -> speechError = message; speechState = SpeechState.IDLE }
+            onError = { message -> speechError = message; speechState = SpeechState.IDLE },
+            onStatus = { message -> speechError = message }
         )
     }
 
@@ -173,7 +174,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val loaded = withContext(Dispatchers.IO) { repository.readParagraphs(book).getOrElse { listOf("无法读取文件：${it.message}") } }
                 if (currentBook?.id == book.id) {
                     paragraphs = loaded
-                    textChapters = TextParser.chapters(loaded)
+                    textChapters = withContext(Dispatchers.Default) { TextParser.chapters(loaded) }
                     currentParagraph = positionPrefs.getInt("text.${book.id}", 0).coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))
                 }
             }
@@ -282,6 +283,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun moveChapter(direction: Int) {
+        val current = textChapters.indexOfLast { it.index <= currentParagraph }.coerceAtLeast(0)
+        val chapter = textChapters.getOrNull((current + direction).coerceIn(0, (textChapters.size - 1).coerceAtLeast(0))) ?: return
+        jumpToParagraph(chapter.index)
+    }
+    fun jumpToParagraph(index: Int) { selectParagraph(index); restartIfActive() }
+    fun saveSpeechSettings(address: String, key: String): String {
+        stopSpeech()
+        return runCatching { com.guiye.reader.speech.RemoteSpeechSettings(getApplication()).save(address, key); "已保存，选择音色试听" }
+            .getOrElse { it.message ?: "保存失败" }
+    }
     fun previous() { selectParagraph((currentParagraph - 1).coerceAtLeast(0)); restartIfActive() }
     fun next() { selectParagraph((currentParagraph + 1).coerceAtMost(paragraphs.lastIndex)); restartIfActive() }
     fun chooseVoice(id: String?) {
