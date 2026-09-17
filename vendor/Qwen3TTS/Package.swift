@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "GuiyeQwen3TTS",
-    platforms: [.macOS(.v15), .iOS(.v18)],
+    platforms: [.macOS("15.0"), .iOS("18.0")],
     products: [.library(name: "Qwen3TTS", targets: ["Qwen3TTS"])],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.29.1"),

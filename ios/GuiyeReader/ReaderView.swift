@@ -393,6 +393,8 @@ private struct VoiceLibraryView: View {
                 Section("Qwen 收藏音色 · iOS 实验版") {
                     Text("1号温柔自然、4号温柔微嗲：以你选定的原始试听作为声音参考，在本机朗读新正文。使用 0.6B 四位量化模型，实际音色与电脑试听可能略有差异。模型较大，首次出声可能较慢，尚需真机验证；遇到等待或发热可切换原有 Kokoro / 系统语音。")
                         .font(.caption).foregroundStyle(.secondary)
+                    Text("Qwen 暂限前台使用，离开前台会停止；锁屏听书请选择原有 Kokoro 或系统语音。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Kokoro 开源神经语音") {
                     Text("模型已内置。选择“甜橙、蜜桃、月光、清泉”等音色后，正文始终在设备上生成语音，不上传、不需要网络。首次朗读需要稍等模型载入。")

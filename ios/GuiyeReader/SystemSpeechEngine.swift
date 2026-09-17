@@ -36,6 +36,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var ready: [Int: (SpeechSegment, Data)] = [:]
     private var sourceEnded = false
     private var memoryObserver: NSObjectProtocol?
+    private var inactiveObserver: NSObjectProtocol?
     private var isNeuralVoice: Bool { voiceID?.hasPrefix("kokoro:") == true || voiceID?.hasPrefix("qwen:") == true }
 
     var onSegmentStarted: ((Int) -> Void)?
@@ -49,6 +50,11 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             guard let self else { return }
             self.fail("设备内存紧张，已停止语音。请切换系统语音或 Kokoro 后重试。")
             Self.synthesisQueue.async { Self.offlineTts = nil; QwenOfflineRuntime.release() }
+        }
+        inactiveObserver = NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.voiceID?.hasPrefix("qwen:") == true else { return }
+            self.fail("Qwen 实验版暂限前台朗读，离开前台已停止。后台听书请选 Kokoro 或系统语音。")
+            Self.synthesisQueue.async { QwenOfflineRuntime.release() }
         }
     }
 
@@ -302,6 +308,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     deinit {
         session.cancel()
         if let memoryObserver { NotificationCenter.default.removeObserver(memoryObserver) }
+        if let inactiveObserver { NotificationCenter.default.removeObserver(inactiveObserver) }
     }
 }
 

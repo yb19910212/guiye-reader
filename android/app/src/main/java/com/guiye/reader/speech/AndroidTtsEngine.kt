@@ -55,6 +55,7 @@ class AndroidTtsEngine(
     private var selectedRate = 1f
     private var player: MediaPlayer? = null
     private var playerPrepared = false
+    private var playingSegmentId: Int? = null
     private var audioFile: File? = null
     private var session = AtomicBoolean(false)
     private var closed = false
@@ -180,6 +181,7 @@ class AndroidTtsEngine(
         val (segment, file) = item
         val token = session
         audioFile = file
+        playingSegmentId = segment.id
         try {
             val next = MediaPlayer()
             player = next
@@ -251,6 +253,7 @@ class AndroidTtsEngine(
         }
         player = null
         playerPrepared = false
+        playingSegmentId = null
         audioFile?.delete()
         audioFile = null
     }
@@ -268,7 +271,7 @@ class AndroidTtsEngine(
         val existing = player
         if (selectedVoiceId?.startsWith("kokoro:") == true) {
             if (existing != null && playerPrepared) {
-                runCatching { existing.start() }.onFailure { fail("恢复播放失败，请重试") }
+                runCatching { existing.start(); playingSegmentId?.let(onSegmentStarted) }.onFailure { fail("恢复播放失败，请重试") }
             }
             pumpOffline()
         } else playCurrent()
