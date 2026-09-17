@@ -16,7 +16,7 @@ private var hasBundledLabModel: Bool {
     }
 }
 
-private final class LabCancellation: @unchecked Sendable {
+final class LabCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var stopped = false
     func cancel() { lock.lock(); stopped = true; lock.unlock() }
@@ -49,9 +49,12 @@ private final class LabDownloadProgress: NSObject, URLSessionDownloadDelegate, @
 }
 
 // One worker owns all MLX state. No model creation, hashing or inference on MainActor.
-private actor OfflineLabWorker {
+actor OfflineLabWorker {
     static let shared = OfflineLabWorker()
     private var model: Qwen3TTSModel?
+    private var generating = false
+    private var releaseRequested = false
+    private var verified = false
     private let importedDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("QwenLab-0d6bb6fe-v1", isDirectory: true)
     private var directory: URL {
@@ -83,6 +86,7 @@ private actor OfflineLabWorker {
                     throw labError("内置模型损坏：\(entry.path)。请重新安装完整包，无需在应用内下载。")
                 }
             }
+            verified = true
             return
         }
         let manager = FileManager.default
@@ -146,6 +150,8 @@ private actor OfflineLabWorker {
 
     func importFile(_ url: URL, path: String, report: @escaping @Sendable (String) -> Void) async throws {
         guard !hasBundledLabModel else { throw labError("完整内置版无需导入，请校验内置模型") }
+        guard !generating else { throw labError("请先停止正文朗读，再导入模型") }
+        verified = false
         release()
         guard OfflineModelFiles.paths.contains(path) else { throw labError("无效模型类型") }
         let support = Bundle.main.bundleURL.appendingPathComponent("QwenSupport")
@@ -171,10 +177,24 @@ private actor OfflineLabWorker {
         try await prepare(download: false, report: report)
     }
 
-    struct Result: Sendable { let file: URL; let load: Double; let generate: Double; let audio: Double }
+    struct Result: Sendable { let data: Data; let load: Double; let generate: Double; let audio: Double }
     func test(reference: String, text: String, cancellation: LabCancellation,
               report: @escaping @Sendable (String) -> Void) async throws -> Result {
         guard ["gentle", "coaxing"].contains(reference) else { throw labError("无效音色") }
+        // Actor methods can reenter during asynchronous model loading. Explicitly
+        // serialize the lab and every reader session, including rapid voice switches.
+        while generating {
+            guard !cancellation.cancelled else { throw CancellationError() }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        try Task.checkCancellation()
+        guard !cancellation.cancelled else { throw CancellationError() }
+        generating = true
+        defer {
+            generating = false
+            if releaseRequested { model = nil; GPU.clearCache(); releaseRequested = false }
+        }
+        if !verified { try await prepare(download: false, report: report); verified = true }
         guard ProcessInfo.processInfo.physicalMemory >= 6_000_000_000 else { throw labError("实验模型至少需要 6 GB 设备内存，请继续使用 API 或系统语音") }
         let start = Date()
         let cancelled = { cancellation.cancelled || Date().timeIntervalSince(start) > 120 }
@@ -191,18 +211,20 @@ private actor OfflineLabWorker {
         let generatedAt = Date()
         let audio = try model.generateVoiceClone(text: text, referenceAudio: referenceAudio,
             referenceText: "你回来啦，今天辛苦了。要不要坐下来，让我陪你读一会儿书？别着急，今晚的故事，我们慢慢听。",
-            language: "chinese", temperature: 0.7, maxTokens: 192,
+            language: "chinese", temperature: 0.7, maxTokens: 384,
             onToken: { _ in frames += 1; if frames % 8 == 0 { report("生成语音：\(frames) 帧（不是下载进度）") } },
             shouldCancel: cancelled)
         guard !cancelled() else { throw CancellationError() }
-        guard frames < 192 else { throw labError("达到测试生成上限，未播放可能截断的音频；请缩短测试句") }
+        guard frames < 384 else { throw labError("达到生成上限，未播放可能截断的音频；请重试或切换系统语音") }
         let samples = audio.asArray(Float.self)
         guard !samples.isEmpty, samples.allSatisfy({ $0.isFinite }) else { throw labError("模型返回无效音频") }
-        let output = FileManager.default.temporaryDirectory.appendingPathComponent("guiye-offline-lab.wav")
-        try saveAudioArray(audio, sampleRate: 24_000, to: output)
-        return Result(file: output, load: load, generate: Date().timeIntervalSince(generatedAt), audio: Double(samples.count) / 24_000)
+        let data = try SpeechWAV.encode(samples: samples)
+        return Result(data: data, load: load, generate: Date().timeIntervalSince(generatedAt), audio: Double(samples.count) / 24_000)
     }
-    func release() { model = nil; GPU.clearCache() }
+    func release() {
+        if generating { releaseRequested = true }
+        else { model = nil; GPU.clearCache() }
+    }
 }
 
 @MainActor
@@ -250,7 +272,7 @@ private final class OfflineLabState: ObservableObject {
                     result = String(format: "模型加载 %.1f 秒 · 生成 %.1f 秒 · 音频 %.1f 秒\n生成耗时/音频时长 %.2f（小于 1 才有连续播放的基础）", output.load, output.generate, output.audio, output.generate / output.audio)
                     try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
                     try AVAudioSession.sharedInstance().setActive(true)
-                    player = try AVAudioPlayer(contentsOf: output.file)
+                    player = try AVAudioPlayer(data: output.data)
                     guard player?.play() == true else { throw labError("音频播放失败") }
                     status = "生成完成，正在试听；可切换音色重测"
                 } else { ready = true; status = "模型完整性校验通过，可断网测试 1 号 / 4 号" }
@@ -288,7 +310,7 @@ struct OfflineVoiceLab: View {
             Form {
                 Section("独立实验，不接管阅读器") {
                     if hasBundledLabModel {
-                        Text("主模型、语音解码器、分词器及 1号/4号参考音色已完整内置。无需下载或导入，先校验内置文件，再断网试听。模型仅在测试时加载，不随阅读器启动。尚未通过真机性能验收。")
+                        Text("模型与 1号/4号音色已完整内置，无需下载。TXT 正文的智能语音中也可选择本地音色；仅主动朗读时加载。短句已获真机反馈，长时间朗读、发热与内存仍待验收。")
                         Button("校验内置模型（无需联网）") { state.prepare(source: "official", custom: "") }.disabled(state.busy)
                     } else {
                         Text("模型约 1.7 GB，可用 Wi-Fi 或蜂窝网络下载，也可从文件导入。建议预留 4 GB 空间，保持页面在前台。校验后可断网试听；不上传正文，尚未通过真机性能验收。")

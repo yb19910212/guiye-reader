@@ -2,6 +2,30 @@ import Foundation
 
 @main struct SpeechQueueSmoke {
     static func main() async throws {
+        let longText = String(repeating: "你好😀，今天天气很好。", count: 100)
+        var localCursor = SpeechChunkCursor(segments: [.init(id: 42, text: longText, languageTag: "zh-CN")], from: 0, maxCharacters: 40)
+        var localJoined = ""
+        while let chunk = localCursor.next() {
+            precondition(chunk.id == 42 && chunk.text.count <= 40)
+            localJoined += chunk.text
+        }
+        precondition(localJoined == longText)
+        var preroll = SpeechPreroll()
+        precondition(!preroll.canPlay(ready: 0, ended: false))
+        precondition(!preroll.canPlay(ready: 1, ended: false))
+        precondition(preroll.canPlay(ready: 2, ended: false))
+        precondition(preroll.canPlay(ready: 1, ended: false))
+        precondition(!preroll.canPlay(ready: 0, ended: false))
+        precondition(!preroll.canPlay(ready: 1, ended: false))
+        precondition(preroll.canPlay(ready: 1, ended: true))
+        precondition(!preroll.canPlay(ready: 0, ended: true))
+        let encoded = try SpeechWAV.encode(samples: Array(repeating: 0.5, count: 24_000))
+        precondition((try? SpeechWAV.duration(encoded)) == 1)
+        let clipped = try SpeechWAV.encode(samples: [-2, 0, 2])
+        precondition(Array(clipped.suffix(6)) == [1, 128, 0, 0, 255, 127])
+        precondition((try? SpeechWAV.encode(samples: [.nan])) == nil)
+        precondition((try? SpeechWAV.encode(samples: [.infinity])) == nil)
+        precondition((try? SpeechWAV.encode(samples: [])) == nil)
         let texts = ["", "   ", "短句。", String(repeating: "中文😀没有标点", count: 600), "First sentence. Second sentence! 末尾。"]
         for text in texts where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             var cursor = SpeechChunkCursor(segments: [.init(id: 17, text: text, languageTag: "zh-CN")], from: 0)

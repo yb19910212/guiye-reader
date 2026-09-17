@@ -93,7 +93,7 @@ final class ReaderViewModel: ObservableObject {
         }
     }
     func cacheChapter() {
-        guard selectedVoiceID?.hasPrefix("api:") == true else { return }
+        guard selectedVoiceID?.hasPrefix("api:") == true || selectedVoiceID?.hasPrefix("qwen:") == true else { return }
         stopSpeech()
         let start = chapters.last(where: { $0.index <= currentParagraph })?.index ?? 0
         let end = chapters.first(where: { $0.index > currentParagraph })?.index ?? paragraphs.count
@@ -134,7 +134,7 @@ final class ReaderViewModel: ObservableObject {
         playbackState = .playing
         engine.speak(segments: [SpeechSegment(id: currentParagraph, text: sample, languageTag: voice.languageTag)], from: 0, voiceID: voice.id, rate: rate)
     }
-    func updateRate(_ value: Float) { rate = value; if selectedVoiceID?.hasPrefix("api:") == true { engine.setRate(value) } else { restartIfActive(delay: 350_000_000) } }
+    func updateRate(_ value: Float) { rate = value; if selectedVoiceID?.hasPrefix("api:") == true || selectedVoiceID?.hasPrefix("qwen:") == true { engine.setRate(value) } else { restartIfActive(delay: 350_000_000) } }
     private func restartIfActive(delay: UInt64 = 0) {
         speechRestartTask?.cancel(); speechRestartTask = nil
         guard playbackState != .idle else { return }

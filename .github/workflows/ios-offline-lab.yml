@@ -7,6 +7,11 @@ on:
       - '.github/workflows/ios-offline-lab.yml'
       - 'ios/GuiyeReader/OfflineVoiceLab.swift'
       - 'ios/GuiyeReader/OfflineModelFiles.swift'
+      - 'ios/GuiyeReader/SpeechEngine.swift'
+      - 'ios/GuiyeReader/SystemSpeechEngine.swift'
+      - 'ios/GuiyeReader/ReaderView.swift'
+      - 'ios/GuiyeReader/ReaderViewModel.swift'
+      - 'ios/Tests/SpeechQueueSmoke.swift'
       - 'ios/Tests/OfflineModelFilesSmoke.swift'
       - 'scripts/prepare_qwen_model.py'
       - 'scripts/configure_qwen_lab.py'
@@ -62,11 +67,15 @@ jobs:
           prerelease: true
           body: |
             独立实验版，非流畅度验收通过的正式版。Android 及现有轻量版不变。
-            v0.17.2 完整内置版：两个模型权重、分词器、1号/4号参考音色全部打入 IPA。
+            v0.18.0：本地 1号/4号正式接入 TXT 正文入口（连续朗读仍为实验功能）。
+            智能语音 → 本地离线音色 → 返回正文播放；不需要 API 密钥，不上传正文。
+            最多 40 字短句、两段预缓冲、段间模型复用、音频缓存、整章预缓存、取消与切换隔离。
+            限前台推理，锁屏/离开前台/内存警告时停止；温度过高时停止新生成。建议先用 1×。
+            两个模型权重、分词器、1号/4号参考音色全部打入 IPA。
             安装后无需再下载或导入模型。直接读取包内资源，不额外复制权重，不随阅读器启动加载。
             书库 → 更多 → 离线语音实验室 → 校验内置模型，再断网测试 1号、4号。
             修复 tokenizer.json 缺失：从固定版本词表生成并通过 Swift/Python 分词一致性检查。
             模型原始文件约 1.7 GB，安装及签名请预留足够空间。包内权重按固定 SHA256 校验。
-            API 朗读保留，实验功能暂不接管正文朗读。尚需 iPhone 真机试听、内存和发热验收。
+            API 与系统朗读保留，不自动回退上传正文。EPUB/PDF 与 Android 不变。尚需长时间真机连续朗读、内存和发热验收。
             iOS 未签名 IPA，需要自行签名安装。
           files: ios/GuiyeReader-ios-offline-lab-unsigned.ipa

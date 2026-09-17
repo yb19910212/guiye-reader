@@ -19,7 +19,7 @@ struct SpeechVoice: Identifiable, Hashable {
     }
 
     var isOpenSource: Bool { provider == "kokoro" || provider == "qwen" }
-    var qualityRank: Int { provider == "api" ? 4 : (quality == "Premium" ? 3 : (quality == "增强" ? 2 : 1)) }
+    var qualityRank: Int { provider == "api" || provider == "qwen" ? 4 : (quality == "Premium" ? 3 : (quality == "增强" ? 2 : 1)) }
     var languageName: String {
         let locale = Locale(identifier: "zh-Hans")
         return locale.localizedString(forIdentifier: languageTag) ?? languageTag
@@ -79,10 +79,12 @@ struct SpeechPrefetchWindow {
 
 struct SpeechChunkCursor {
     private let segments: [SpeechSegment]
+    private let maxCharacters: Int
     private var paragraph: Int
     private var offset: String.Index?
-    init(segments: [SpeechSegment], from: Int) {
+    init(segments: [SpeechSegment], from: Int, maxCharacters: Int = 80) {
         self.segments = segments
+        self.maxCharacters = max(1, maxCharacters)
         paragraph = min(max(from, 0), segments.count)
     }
     mutating func next() -> SpeechSegment? {
@@ -90,7 +92,7 @@ struct SpeechChunkCursor {
             let segment = segments[paragraph]
             let start = offset ?? segment.text.startIndex
             guard start < segment.text.endIndex else { paragraph += 1; offset = nil; continue }
-            let limit = segment.text.index(start, offsetBy: 80, limitedBy: segment.text.endIndex) ?? segment.text.endIndex
+            let limit = segment.text.index(start, offsetBy: maxCharacters, limitedBy: segment.text.endIndex) ?? segment.text.endIndex
             var end = limit
             if limit < segment.text.endIndex {
                 let indexes = segment.text[start..<limit].indices
@@ -112,6 +114,16 @@ struct SpeechChunkCursor {
     }
 }
 
+struct SpeechPreroll {
+    private(set) var waiting = true
+    mutating func canPlay(ready: Int, ended: Bool) -> Bool {
+        if ready == 0 { waiting = true; return false }
+        if waiting && ready < 2 && !ended { return false }
+        waiting = false
+        return true
+    }
+}
+
 struct SpeechProgress {
     var phase = "准备中"
     var completed = 0
@@ -124,10 +136,28 @@ struct SpeechProgress {
     var startedAt = Date()
     var requestStartedAt: Date?
     var preparingChapter = false
+    var localTiming: String?
     var fraction: Double { total == 0 ? 0 : Double(completed) / Double(total) }
 }
 
 enum SpeechWAV {
+    static func encode(samples: [Float], rate: Int = 24_000) throws -> Data {
+        guard !samples.isEmpty, samples.count <= (8 * 1024 * 1024 - 44) / 2,
+              (8_000...192_000).contains(rate), samples.allSatisfy({ $0.isFinite }) else {
+            throw NSError(domain: "SpeechWAV", code: 2, userInfo: [NSLocalizedDescriptionKey: "模型返回无效音频"])
+        }
+        var result = Data()
+        result.reserveCapacity(44 + samples.count * 2)
+        func number(_ value: Int, _ bytes: Int) {
+            for offset in 0..<bytes { result.append(UInt8(truncatingIfNeeded: value >> (offset * 8))) }
+        }
+        result.append(contentsOf: "RIFF".utf8); number(36 + samples.count * 2, 4)
+        result.append(contentsOf: "WAVEfmt ".utf8); number(16, 4); number(1, 2); number(1, 2)
+        number(rate, 4); number(rate * 2, 4); number(2, 2); number(16, 2)
+        result.append(contentsOf: "data".utf8); number(samples.count * 2, 4)
+        for sample in samples { number(Int((min(1, max(-1, sample)) * 32767).rounded()), 2) }
+        return result
+    }
     static func duration(_ data: Data) throws -> Double {
         func number(_ offset: Int, _ count: Int) -> Int {
             (0..<count).reduce(0) { $0 | Int(data[offset + $1]) << ($1 * 8) }
@@ -171,4 +201,3 @@ actor SpeechDiskCache {
     }
     func clear() throws { if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) } }
 }
-

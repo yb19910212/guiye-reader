@@ -193,14 +193,16 @@ struct ReaderView: View {
     }
 
     @ViewBuilder private var speechCacheControls: some View {
-            if model.selectedVoiceID?.hasPrefix("api:") == true {
+            if model.selectedVoiceID?.hasPrefix("api:") == true || model.selectedVoiceID?.hasPrefix("qwen:") == true {
                 HStack {
                     Button("缓存本章后播放 / 重试", action: model.cacheChapter).disabled(model.playbackState != .idle)
                     Spacer()
                     Button("取消", action: model.cancelSpeech).disabled(model.playbackState == .idle)
                     Menu("缓存") { Button("清理全部语音缓存", role: .destructive) { confirmsSpeechCacheClear = true } }
                 }.font(.caption)
-                Text("本章正文将发送到所设服务器；请保持前台，首次准备可能较久。").font(.caption2).foregroundStyle(.secondary)
+                Text(model.selectedVoiceID?.hasPrefix("qwen:") == true
+                     ? "本机生成，不上传正文。请保持前台，建议先用 1×；倍速可能导致缓冲不足。缓存本章可减少播放等待。"
+                     : "本章正文将发送到所设服务器；请保持前台，首次准备可能较久。").font(.caption2).foregroundStyle(.secondary)
             }
 
     }
@@ -421,16 +423,29 @@ private struct VoiceLibraryView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("外置 API 语音 · 轻量版") {
+#if QWEN_LAB
+                Section("本地离线语音 · 正文实验版") {
+                    Text("选择下方本地 1号/4号后，返回正文点击播放。无需 API 密钥或网络，不上传正文；先缓存两段，再边播放边生成。也可缓存本章后播放。")
+                    Text("模型只在主动朗读时加载，段间复用。暂限前台：锁屏、切到后台或内存紧张会安全停止，已完成缓存保留。建议先用 1×，长时间连续播放仍需真机验收。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if model.selectedVoiceID?.hasPrefix("qwen:") == true {
+                        if let message = model.speechMessage { Text(message).font(.caption) }
+                        if let progress = model.speechProgress {
+                            SpeechPreparationPanel(progress: progress, isIdle: model.playbackState == .idle, playbackTime: { model.playbackTime })
+                        }
+                    }
+                }
+#endif
+                Section("外置 API 语音") {
                     TextField("HTTPS 服务器地址", text: $apiAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     SecureField("API 密钥", text: $apiKey).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("保存连接设置") {
                         model.stopSpeech()
-                        do { try RemoteSpeechSettings.save(address: apiAddress, key: apiKey); settingsMessage = "已保存，选择 1 号或 4 号试听" }
+                        do { try RemoteSpeechSettings.save(address: apiAddress, key: apiKey); settingsMessage = "已保存，请选择外置 API 音色试听" }
                         catch { settingsMessage = error.localizedDescription }
                     }
                     if !settingsMessage.isEmpty { Text(settingsMessage).font(.caption) }
-                    Text("仅主动朗读或试听时，所选正文会发送到你设置的服务器。手机不再加载本地大模型。系统语音仍可独立使用。NAS 当前生成慢于播放，分段等待不代表 App 卡死。")
+                    Text("仅选择外置 API 音色并主动朗读或试听时，正文会发送到你设置的服务器。系统语音可独立使用；不会从本地音色自动切到 API。服务器生成慢时会显示等待状态。")
                         .font(.caption).foregroundStyle(.secondary)
                     if let message = model.speechMessage { Text(message).font(.caption).foregroundStyle(.secondary) }
                 }
@@ -476,6 +491,7 @@ private struct VoiceLibraryView: View {
     private var languageGroups: [VoiceGroup] {
         let grouped = Dictionary(grouping: voices) { voice -> String in
             if voice.provider == "api" { return "外置 API 音色" }
+            if voice.provider == "qwen" { return "本地离线音色" }
             if voice.languageTag.hasPrefix("zh-CN") { return "普通话" }
             if voice.languageTag.hasPrefix("zh-HK") || voice.languageTag.hasPrefix("yue") { return "粤语" }
             if voice.languageTag.hasPrefix("zh-TW") { return "台语 / 繁体中文" }
@@ -484,7 +500,7 @@ private struct VoiceLibraryView: View {
             if voice.languageTag.hasPrefix("ko") { return "韩语" }
             return "其他语言"
         }
-        let order = ["外置 API 音色", "普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
+        let order = ["本地离线音色", "外置 API 音色", "普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
         return order.compactMap { key in grouped[key].map { VoiceGroup(key: key, value: $0) } }
     }
 }
@@ -517,6 +533,7 @@ private struct SpeechPreparationPanel: View {
             Text(progress.phase + " · 已备 " + count).font(.caption)
             if progress.total > 0 { ProgressView(value: progress.fraction) }
             Text(stats).font(.caption2)
+            if let timing = progress.localTiming { Text(timing).font(.caption2) }
             if let waiting = progress.requestStartedAt {
                 Text(String(format: "当前请求等待 %.0f 秒（无内部百分比）", max(0, now.timeIntervalSince(waiting)))).font(.caption2)
             }

@@ -2,6 +2,7 @@ import AVFoundation
 import Foundation
 import Security
 import CryptoKit
+import UIKit
 
 private struct SpeechAPIError: LocalizedError {
     let message: String
@@ -66,6 +67,12 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var ready: [(SpeechSegment, URL)] = []
     private var preparing = false
     private var progress = SpeechProgress()
+    private var preroll = SpeechPreroll()
+    private var isLocal: Bool { voiceID?.hasPrefix("qwen:") == true }
+#if QWEN_LAB
+    private var localCancellation: LabCancellation?
+    private var observers: [NSObjectProtocol] = []
+#endif
     var onProgress: ((SpeechProgress?) -> Void)?
     var playbackTime: String { guard let player else { return "" }; return String(format: "播放 %.0f / %.0f 秒", player.currentTime, player.duration) }
     func setRate(_ value: Float) { rate = value; player?.rate = min(max(0.6 + (rate - 0.35) / 0.30, 0.6), 1.6) }
@@ -79,8 +86,29 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     var onError: ((String) -> Void)?
     var onStatus: ((String?) -> Void)?
 
-    override init() { super.init(); system.delegate = self }
-    lazy var voices: [SpeechVoice] = [
+    override init() {
+        super.init(); system.delegate = self
+#if QWEN_LAB
+        for notification in [UIApplication.willResignActiveNotification, UIApplication.didReceiveMemoryWarningNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.isLocal, !self.queue.isEmpty else { return }
+                self.stop()
+                self.onError?("本地语音已安全停止（离开前台或内存紧张），缓存保留。返回后可继续；锁屏听书请选择 API 或系统语音。")
+            })
+        }
+#endif
+    }
+    private var localVoices: [SpeechVoice] {
+#if QWEN_LAB
+        return [
+            SpeechVoice(id: "qwen:gentle", name: "温柔自然 · 1号（本地）", languageTag: "zh-CN", quality: "离线实验版", provider: "qwen"),
+            SpeechVoice(id: "qwen:coaxing", name: "温柔微嗲 · 4号（本地）", languageTag: "zh-CN", quality: "离线实验版", provider: "qwen")
+        ]
+#else
+        return []
+#endif
+    }
+    lazy var voices: [SpeechVoice] = localVoices + [
         SpeechVoice(id: "api:1", name: "温柔自然 · 1号", languageTag: "zh-CN", quality: "远程 API", isNetworkRequired: true, provider: "api"),
         SpeechVoice(id: "api:4", name: "温柔微嗲 · 4号", languageTag: "zh-CN", quality: "远程 API", isNetworkRequired: true, provider: "api")
     ] + AVSpeechSynthesisVoice.speechVoices().map {
@@ -95,6 +123,9 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard !segments.isEmpty else { return }
         queue = segments; self.index = min(max(0, index), segments.count - 1)
         self.voiceID = voiceID; self.rate = rate
+#if QWEN_LAB
+        if isLocal { startLocal(segments: segments, chapter: chapter); return }
+#endif
         if voiceID?.hasPrefix("api:") != true { speakSystem(); return }
         let id = generationID
         let voice = voiceID == "api:4" ? "4" : "1"
@@ -169,6 +200,73 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             }
         }
     }
+#if QWEN_LAB
+    private func startLocal(segments: [SpeechSegment], chapter: Bool) {
+        let id = generationID
+        let token = LabCancellation(); localCancellation = token
+        let reference = voiceID == "qwen:coaxing" ? "coaxing" : "gentle"
+        var cursor = SpeechChunkCursor(segments: segments, from: index, maxCharacters: 40)
+        preroll = SpeechPreroll(); preparing = chapter
+        progress = SpeechProgress(); progress.preparingChapter = chapter
+        if chapter {
+            var counter = cursor
+            while counter.next() != nil {
+                progress.total += 1
+                if progress.total > 1000 { stop(); onError?("本章过长，请逐段朗读或选择较短章节"); return }
+            }
+        }
+        onProgress?(progress)
+        onStatus?(chapter ? "本机缓存整章后播放；请保持前台，正文不上传" : "本机先准备两段再播放；正文不上传，请保持前台")
+        generation = Task { @MainActor [weak self] in
+            do {
+                while let segment = cursor.next() {
+                    try Task.checkCancellation()
+                    while let owner = self, (!chapter && owner.ready.count >= 2) || owner.paused {
+                        try await Task.sleep(for: .milliseconds(100))
+                    }
+                    guard let owner = self, owner.generationID == id, !token.cancelled else { return }
+                    owner.progress.phase = "检查本地音频缓存"
+                    owner.progress.requestStartedAt = Date(); owner.onProgress?(owner.progress)
+                    // Independent from remote API identity; version includes all synthesis settings.
+                    let identity = String(data: try JSONSerialization.data(withJSONObject:
+                        ["ios-qwen-pcm16-v1-40chars-temp0.7-max384", "0d6bb6fe33f92d47a507e23b9148940e8366ab5b", reference, segment.text]), encoding: .utf8)!
+                    let file = try await SpeechDiskCache.shared.file(identity: identity)
+                    let cachedDuration = await SpeechDiskCache.shared.read(file)
+                    try Task.checkCancellation()
+                    guard owner.generationID == id, !token.cancelled else { return }
+                    if let duration = cachedDuration {
+                        owner.accept(segment, file: file, duration: duration, cached: true)
+                        continue
+                    }
+                    guard UIApplication.shared.applicationState == .active else { throw SpeechAPIError(message: "本地语音需要保持应用在前台") }
+                    guard ProcessInfo.processInfo.thermalState != .serious, ProcessInfo.processInfo.thermalState != .critical else {
+                        throw SpeechAPIError(message: "设备温度较高，已停止本地生成；缓存保留，请降温后继续")
+                    }
+                    let output = try await OfflineLabWorker.shared.test(reference: reference, text: segment.text, cancellation: token) { message in
+                        Task { @MainActor [weak self] in
+                            guard let owner = self, owner.generationID == id, !token.cancelled else { return }
+                            owner.progress.phase = message; owner.onProgress?(owner.progress)
+                        }
+                    }
+                    try Task.checkCancellation()
+                    guard owner.generationID == id, !token.cancelled else { return }
+                    let duration = try await SpeechDiskCache.shared.save(output.data, to: file)
+                    try Task.checkCancellation()
+                    guard owner.generationID == id, !token.cancelled else { return }
+                    owner.progress.localTiming = String(format: "最近生成 %.1f 秒 / 音频 %.1f 秒 · 耗时比 %.2f · 加载 %.1f 秒", output.generate, output.audio, output.generate / max(0.01, output.audio), output.load)
+                    owner.accept(segment, file: file, duration: duration, cached: false)
+                }
+                guard let owner = self, owner.generationID == id, !token.cancelled else { return }
+                owner.ended = true; owner.preparing = false; owner.progress.preparingChapter = false
+                owner.progress.requestStartedAt = nil; owner.playReady()
+            } catch {
+                guard !Task.isCancelled, !token.cancelled, let owner = self, owner.generationID == id else { return }
+                var failed = owner.progress; failed.phase = "本地生成已停止；已完成缓存保留"; failed.requestStartedAt = nil
+                owner.stop(); owner.onProgress?(failed); owner.onError?(error.localizedDescription)
+            }
+        }
+    }
+#endif
     private func accept(_ segment: SpeechSegment, file: URL, duration: Double, cached: Bool) {
         progress.completed += 1; progress.cached += cached ? 1 : 0
         progress.characters += segment.text.count; progress.audioSeconds += duration
@@ -185,6 +283,10 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     }
     private func playReady() {
         guard !preparing, !paused, player == nil else { return }
+        if isLocal && !preroll.canPlay(ready: ready.count, ended: ended) && !(ended && ready.isEmpty) {
+            onStatus?("正在补充本地缓冲 \(ready.count)/2 段；可继续阅读。倍速越高越容易等待。")
+            return
+        }
         guard !ready.isEmpty else {
             if ended { stop(); onQueueCompleted?() }
             else { onStatus?("等待下一段语音，可继续阅读或暂停") }
@@ -207,10 +309,16 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     func resume() {
         paused = false
         progress.phase = preparing ? "继续缓存本章" : "继续播放"; onProgress?(progress)
-        if voiceID?.hasPrefix("api:") == true { if let player { player.play() } else { playReady() } }
+        if voiceID?.hasPrefix("api:") == true || isLocal { if let player { player.play() } else { playReady() } }
         else { system.continueSpeaking() }
     }
     func stop() {
+#if QWEN_LAB
+        if let token = localCancellation {
+            token.cancel(); localCancellation = nil
+            Task { await OfflineLabWorker.shared.release() }
+        }
+#endif
         generationID = UUID(); generation?.cancel(); generation = nil
         player?.delegate = nil; player?.stop(); player = nil
         activeUtterance = nil; system.stopSpeaking(at: .immediate)
@@ -233,5 +341,12 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         guard self.player === player else { return }
         stop(); onError?("音频解码失败")
     }
-    deinit { generation?.cancel() }
+    deinit {
+        generation?.cancel()
+#if QWEN_LAB
+        localCancellation?.cancel()
+        if localCancellation != nil { Task { await OfflineLabWorker.shared.release() } }
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+#endif
+    }
 }
