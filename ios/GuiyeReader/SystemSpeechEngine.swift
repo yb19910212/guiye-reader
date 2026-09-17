@@ -1,6 +1,31 @@
 import AVFoundation
 import Foundation
 import Security
+import CryptoKit
+
+private actor SpeechDiskCache {
+    static let shared = SpeechDiskCache()
+    private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("speech-v2", isDirectory: true)
+    func file(identity: String) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let name = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(name + ".wav")
+    }
+    func read(_ file: URL) -> Double? {
+        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8 * 1024 * 1024,
+              let data = try? Data(contentsOf: file), let duration = try? SpeechWAV.duration(data) else { try? FileManager.default.removeItem(at: file); return nil }
+        return duration
+    }
+    func save(_ data: Data, to file: URL) throws -> Double {
+        let duration = try SpeechWAV.duration(data)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])
+        let used = files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        guard used + data.count <= 200 * 1024 * 1024 else { throw SpeechAPIError(message: "语音缓存已达 200 MB，请清理缓存后重试") }
+        try data.write(to: file, options: .atomic)
+        return duration
+    }
+    func clear() throws { if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) } }
+}
 
 private struct SpeechAPIError: LocalizedError {
     let message: String
@@ -62,7 +87,16 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var voiceID: String?
     private var rate: Float = 0.5
     private var paused = false
-    private var ready: [(SpeechSegment, Data)] = []
+    private var ready: [(SpeechSegment, URL)] = []
+    private var preparing = false
+    private var progress = SpeechProgress()
+    var onProgress: ((SpeechProgress?) -> Void)?
+    var playbackTime: String { guard let player else { return "" }; return String(format: "播放 %.0f / %.0f 秒", player.currentTime, player.duration) }
+    func setRate(_ value: Float) { rate = value; player?.rate = min(max(0.6 + (rate - 0.35) / 0.30, 0.6), 1.6) }
+    func clearCache() { stop(); generation = Task { @MainActor in do { try await SpeechDiskCache.shared.clear(); onStatus?("语音缓存已清理") } catch { onError?("清理缓存失败") } } }
+    func prepareChapter(segments: [SpeechSegment], voiceID: String?, rate: Float) {
+        start(segments: segments, from: 0, voiceID: voiceID, rate: rate, chapter: true)
+    }
     private var ended = false
     var onSegmentStarted: ((Int) -> Void)?
     var onQueueCompleted: (() -> Void)?
@@ -78,6 +112,9 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     quality: $0.quality == .premium ? "Premium" : ($0.quality == .enhanced ? "增强" : "标准"))
     }
     func speak(segments: [SpeechSegment], from index: Int, voiceID: String?, rate: Float) {
+        start(segments: segments, from: index, voiceID: voiceID, rate: rate, chapter: false)
+    }
+    private func start(segments: [SpeechSegment], from index: Int, voiceID: String?, rate: Float, chapter: Bool) {
         stop()
         guard !segments.isEmpty else { return }
         queue = segments; self.index = min(max(0, index), segments.count - 1)
@@ -87,7 +124,15 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let voice = voiceID == "api:4" ? "4" : "1"
         let address = RemoteSpeechSettings.address, key = RemoteSpeechSettings.key
         var cursor = SpeechChunkCursor(segments: segments, from: self.index)
-        onStatus?("正在准备远程语音，可继续阅读；NAS 生成可能需要几十秒")
+        preparing = chapter
+        progress = SpeechProgress()
+        progress.preparingChapter = chapter
+        if chapter {
+            var counter = cursor
+            while counter.next() != nil { progress.total += 1; if progress.total > 1000 { stop(); onError?("本章过长，请选择较短章节或逐段朗读"); return } }
+        }
+        onProgress?(progress)
+        onStatus?(chapter ? "本章音频全部缓存后自动播放；取消后可复用已完成缓存" : "边生成边听，生成较慢时会等待")
         generation = Task { @MainActor [weak self] in
             do {
                 guard !key.isEmpty else { throw SpeechAPIError(message: "请先在智能语音中保存 API 密钥") }
@@ -95,10 +140,22 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 while let segment = cursor.next() {
                     try Task.checkCancellation()
                     // Bound audio memory to current playback plus two prepared chunks.
-                    while let owner = self, owner.ready.count >= 2 || owner.paused {
+                    while let owner = self, (!chapter && owner.ready.count >= 2) || owner.paused {
                         try await Task.sleep(nanoseconds: 150_000_000)
                     }
                     guard let owner = self, owner.generationID == id else { return }
+                    owner.progress.phase = "检查本机缓存"
+                    owner.progress.requestStartedAt = Date()
+                    owner.onProgress?(owner.progress)
+                    let identity = String(data: try JSONSerialization.data(withJSONObject: ["sentence-v2", url.absoluteString, key, voice, segment.text]), encoding: .utf8)!
+                    let cachedFile = try await SpeechDiskCache.shared.file(identity: identity)
+                    if let duration = await SpeechDiskCache.shared.read(cachedFile) {
+                        try Task.checkCancellation()
+                        owner.accept(segment, file: cachedFile, duration: duration, cached: true)
+                        continue
+                    }
+                    owner.progress.phase = "等待服务器生成 / 下载"
+                    owner.onProgress?(owner.progress)
                     var request = URLRequest(url: url, timeoutInterval: 300)
                     request.httpMethod = "POST"
                     request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
@@ -111,7 +168,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                         defer { try? FileManager.default.removeItem(at: file) }
                         try Task.checkCancellation()
                         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                        if status == 429 && attempt < 15 { try await Task.sleep(nanoseconds: 2_000_000_000); continue }
+                        if status == 429 && attempt < 15 { owner.progress.phase = "服务器繁忙，排队重试"; owner.onProgress?(owner.progress); try await Task.sleep(nanoseconds: 2_000_000_000); continue }
                         guard status == 200 else { throw SpeechAPIError(message: status == 401 ? "API 密钥无效" : "语音服务暂不可用（HTTP " + String(status) + "），可切换系统语音") }
                         let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                         guard size > 44, size <= 8 * 1024 * 1024 else { throw SpeechAPIError(message: "音频大小异常") }
@@ -121,15 +178,27 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                         audio = data; break
                     }
                     guard owner.generationID == id, let audio else { return }
-                    owner.ready.append((segment, audio)); owner.playReady()
+                    owner.progress.phase = "校验并保存音频"
+                    owner.onProgress?(owner.progress)
+                    let duration = try await SpeechDiskCache.shared.save(audio, to: cachedFile)
+                    try Task.checkCancellation()
+                    owner.accept(segment, file: cachedFile, duration: duration, cached: false)
                 }
                 guard let owner = self, owner.generationID == id else { return }
-                owner.ended = true; owner.playReady()
+                owner.ended = true; owner.preparing = false; owner.progress.preparingChapter = false; owner.progress.requestStartedAt = nil; owner.playReady()
             } catch {
                 guard !Task.isCancelled, let owner = self, owner.generationID == id else { return }
-                owner.stop(); owner.onError?(error.localizedDescription)
+                var failed = owner.progress; failed.phase = "失败，可重试；已完成缓存保留"; failed.requestStartedAt = nil; failed.measuredAt = Date()
+                owner.stop(); owner.onProgress?(failed); owner.onError?(error.localizedDescription)
             }
         }
+    }
+    private func accept(_ segment: SpeechSegment, file: URL, duration: Double, cached: Bool) {
+        progress.completed += 1; progress.cached += cached ? 1 : 0
+        progress.characters += segment.text.count; progress.audioSeconds += duration
+        progress.requestStartedAt = nil; progress.measuredAt = Date()
+        progress.phase = paused ? "已暂停" : (preparing ? "缓存本章中" : "音频已准备")
+        ready.append((segment, file)); onProgress?(progress); playReady()
     }
     private func speakSystem() {
         guard queue.indices.contains(index) else { stop(); onQueueCompleted?(); return }
@@ -139,27 +208,29 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         activeUtterance = u; system.speak(u)
     }
     private func playReady() {
-        guard !paused, player == nil else { return }
+        guard !preparing, !paused, player == nil else { return }
         guard !ready.isEmpty else {
             if ended { stop(); onQueueCompleted?() }
             else { onStatus?("等待下一段语音，可继续阅读或暂停") }
             return
         }
-        let (segment, data) = ready.removeFirst()
+        let (segment, file) = ready.removeFirst()
         do {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
             try AVAudioSession.sharedInstance().setActive(true)
-            let next = try AVAudioPlayer(data: data)
+            let next = try AVAudioPlayer(contentsOf: file)
             next.delegate = self; next.enableRate = true
             next.rate = min(max(0.6 + (rate - 0.35) / 0.30, 0.6), 1.6)
             player = next
             guard next.play() else { throw SpeechAPIError(message: "音频无法播放") }
+            progress.phase = "正在播放"; progress.played += 1; onProgress?(progress)
             onStatus?(nil); onSegmentStarted?(segment.id)
         } catch { stop(); onError?(error.localizedDescription) }
     }
-    func pause() { paused = true; player?.pause(); system.pauseSpeaking(at: .word) }
+    func pause() { paused = true; progress.phase = "已暂停（当前请求可能仍在完成）"; onProgress?(progress); player?.pause(); system.pauseSpeaking(at: .word) }
     func resume() {
         paused = false
+        progress.phase = preparing ? "继续缓存本章" : "继续播放"; onProgress?(progress)
         if voiceID?.hasPrefix("api:") == true { if let player { player.play() } else { playReady() } }
         else { system.continueSpeaking() }
     }
@@ -167,7 +238,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         generationID = UUID(); generation?.cancel(); generation = nil
         player?.delegate = nil; player?.stop(); player = nil
         activeUtterance = nil; system.stopSpeaking(at: .immediate)
-        ready.removeAll(); queue.removeAll(); paused = false; ended = false; onStatus?(nil)
+        ready.removeAll(); queue.removeAll(); paused = false; ended = false; preparing = false; onProgress?(nil); onStatus?(nil)
     }
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
         guard activeUtterance === utterance, queue.indices.contains(index) else { return }

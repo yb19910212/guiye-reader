@@ -81,6 +81,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var selectedVoiceId by mutableStateOf<String?>(null)
     var speechError by mutableStateOf<String?>(null)
         private set
+    var speechProgress by mutableStateOf<com.guiye.reader.speech.SpeechProgress?>(null)
+        private set
+    val playbackTime: String get() = engine.playbackTime
     private var textPositionSaveJob: Job? = null
     private var speechRestartJob: Job? = null
 
@@ -88,10 +91,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         AndroidTtsEngine(
             application,
             onSegmentStarted = { selectParagraph(it) },
-            onQueueCompleted = { speechState = SpeechState.IDLE },
+            onQueueCompleted = { speechState = SpeechState.IDLE; speechError = "本次朗读已完成" },
             onReady = { voices = engineVoices() },
             onError = { message -> speechError = message; speechState = SpeechState.IDLE },
-            onStatus = { message -> speechError = message }
+            onStatus = { message -> speechError = message },
+            onProgress = { speechProgress = it }
         )
     }
 
@@ -194,6 +198,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun closeBook() { flushTextPosition(); stopSpeech(); currentBook = null; paragraphs = sampleParagraphs; textChapters = TextParser.chapters(sampleParagraphs) }
+    fun cacheChapter() {
+        if (selectedVoiceId?.startsWith("api:") != true) return
+        stopSpeech()
+        val start = textChapters.lastOrNull { it.index <= currentParagraph }?.index ?: 0
+        val end = textChapters.firstOrNull { it.index > currentParagraph }?.index ?: paragraphs.size
+        speechState = SpeechState.PLAYING
+        engine.prepareChapter((start until end).map { SpeechSegment(it, paragraphs[it], "zh-CN") }, selectedVoiceId, rate)
+    }
+    fun clearSpeechCache() { stopSpeech(); engine.clearCache() }
+    fun cancelSpeech() { stopSpeech(); speechError = "已取消，已完成缓存保留；可重新缓存本章继续" }
     private fun stopSpeech() {
         speechRestartJob?.cancel(); speechRestartJob = null
         engine.stop(); speechState = SpeechState.IDLE
@@ -313,7 +327,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         speechState = SpeechState.PLAYING
         engine.speak(listOf(SpeechSegment(currentParagraph, sample, voice.languageTag)), 0, voice.id, rate)
     }
-    fun updateRate(value: Float) { rate = value; restartIfActive(350) }
+    fun updateRate(value: Float) { rate = value; if (selectedVoiceId?.startsWith("api:") == true) engine.setRate(value) else restartIfActive(350) }
     private fun restartIfActive(waitMs: Long = 0) {
         speechRestartJob?.cancel(); speechRestartJob = null
         if (speechState == SpeechState.IDLE) return

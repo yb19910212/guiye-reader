@@ -36,13 +36,14 @@ class AndroidTtsEngine(
     private val onQueueCompleted: () -> Unit,
     private val onReady: () -> Unit,
     private val onError: (String) -> Unit,
-    private val onStatus: (String?) -> Unit = {}
+    private val onStatus: (String?) -> Unit = {},
+    private val onProgress: (SpeechProgress?) -> Unit = {}
 ) : SpeechEngine, TextToSpeech.OnInitListener {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val tts = TextToSpeech(appContext, this)
     private var initialized = false
-    private var paused = false
+    @Volatile private var paused = false
     private var queue: List<SpeechSegment> = emptyList()
     private var currentIndex = 0
     private var selectedVoiceId: String? = null
@@ -59,6 +60,20 @@ class AndroidTtsEngine(
     private var window = SpeechPrefetchWindow()
     private val ready = mutableMapOf<Int, Pair<SpeechSegment, File>>()
     private var sourceEnded = false
+    private var preparing = false
+    private var progress = SpeechProgress()
+    private val cacheDirectory = File(appContext.cacheDir, "speech-v2")
+    val playbackTime: String get() = if (playerPrepared) runCatching { "播放 ${player!!.currentPosition / 1000} / ${player!!.duration / 1000} 秒" }.getOrDefault("") else ""
+    fun setRate(value: Float) {
+        selectedRate = value
+        if (playerPrepared) runCatching { player?.let { it.playbackParams = it.playbackParams.setSpeed(value.coerceIn(0.6f, 1.6f)); if (paused) it.pause() } }
+    }
+    fun clearCache() {
+        stop()
+        RemoteRuntime.executor.execute { val ok = !cacheDirectory.exists() || cacheDirectory.deleteRecursively()
+            mainHandler.post { onStatus(if (ok) "语音缓存已清理" else "缓存清理失败，请重试") } }
+    }
+    fun prepareChapter(segments: List<SpeechSegment>, voiceId: String?, rate: Float) = start(segments, 0, voiceId, rate, true)
     @Volatile private var activeCall: okhttp3.Call? = null
     private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS).readTimeout(300, TimeUnit.SECONDS).callTimeout(330, TimeUnit.SECONDS).build()
@@ -100,6 +115,9 @@ class AndroidTtsEngine(
     }
 
     override fun speak(segments: List<SpeechSegment>, startIndex: Int, voiceId: String?, rate: Float) {
+        start(segments, startIndex, voiceId, rate, false)
+    }
+    private fun start(segments: List<SpeechSegment>, startIndex: Int, voiceId: String?, rate: Float, chapter: Boolean) {
         if (closed) return
         stop()
         if (segments.isEmpty()) { onQueueCompleted(); return }
@@ -109,7 +127,18 @@ class AndroidTtsEngine(
         selectedVoiceId = voiceId
         selectedRate = rate
         paused = false
-        if (voiceId?.startsWith("api:") == true) cursor = SpeechChunkCursor(segments, currentIndex)
+        if (voiceId?.startsWith("api:") == true) {
+            cursor = SpeechChunkCursor(segments, currentIndex)
+            var total = 0
+            if (chapter) {
+                val counter = SpeechChunkCursor(segments, currentIndex)
+                while (counter.next() != null) { total++; if (total > 1000) { fail("本章过长，请选择较短章节或逐段朗读"); return } }
+                window = SpeechPrefetchWindow(total + 1)
+            }
+            preparing = chapter && total > 0
+            progress = SpeechProgress(total = total, preparingChapter = chapter)
+            onProgress(progress)
+        }
         playCurrent()
     }
 
@@ -146,12 +175,28 @@ class AndroidTtsEngine(
         val settings = RemoteSpeechSettings(appContext)
         val address = settings.address
         val key = settings.key
-        onStatus("正在准备远程语音，可继续阅读；NAS 生成可能需要几十秒")
+
         RemoteRuntime.executor.execute {
             if (token.get()) return@execute
+            var cacheHit = false
+            var duration = 0.0
             runCatching {
+                while (paused && !token.get()) Thread.sleep(150)
+                if (token.get()) return@execute
+                mainHandler.post { if (session === token && !token.get()) {
+                    progress = progress.copy(phase = "检查缓存 / 等待服务器生成", requestStartedAt = System.currentTimeMillis()); onProgress(progress)
+                } }
                 require(key.isNotBlank()) { "请先保存服务器地址和 API 密钥" }
                 val url = RemoteSpeechSettings.endpoint(address)
+                check(cacheDirectory.isDirectory || cacheDirectory.mkdirs()) { "无法创建语音缓存" }
+                val identity = org.json.JSONArray(listOf("sentence-v2", url, key, voice, segment.text)).toString()
+                val name = java.security.MessageDigest.getInstance("SHA-256").digest(identity.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it.toInt() and 255) }
+                val cachedFile = File(cacheDirectory, "$name.wav")
+                if (cachedFile.isFile) {
+                    val valid = runCatching { check(cachedFile.length() <= 8*1024*1024); SpeechWAV.duration(cachedFile.readBytes()) }.getOrNull()
+                    if (valid != null) { cacheHit = true; duration = valid; return@runCatching cachedFile }
+                    cachedFile.delete()
+                }
                 val body = JSONObject().put("model", "qwen3-tts-0.6b").put("input", segment.text)
                     .put("voice", voice).put("response_format", "wav").put("speed", 1)
                 var payload: ByteArray? = null
@@ -164,7 +209,7 @@ class AndroidTtsEngine(
                     if (token.get()) { call.cancel(); return@execute }
                     call.execute().use { response ->
                         if (response.code == 429 && attempt < 15) {
-                            // bounded cancellable retry; the NAS admits only one generator
+                            mainHandler.post { if (session === token && !token.get()) { progress = progress.copy(phase = "服务器繁忙，排队重试"); onProgress(progress) } }
                         } else {
                             check(response.code == 200) {
                                 if (response.code == 401) "API 密钥无效" else "语音服务器返回 HTTP ${response.code}"
@@ -187,15 +232,23 @@ class AndroidTtsEngine(
                     repeat(20) { if (token.get()) return@execute; Thread.sleep(100) }
                 }
                 val data = payload ?: error("服务器繁忙，请稍后重试")
-                check(data.size > 44 && String(data, 0, 4, Charsets.US_ASCII) == "RIFF") { "服务器未返回有效 WAV 音频" }
+                duration = SpeechWAV.duration(data)
                 if (token.get()) return@execute
-                File.createTempFile("remote-tts-", ".wav", appContext.cacheDir).apply {
-                    try { writeBytes(data) } catch (error: Exception) { delete(); throw error }
-                }
+                val used = cacheDirectory.listFiles().orEmpty().sumOf { it.length() }
+                check(used + data.size <= 200L * 1024 * 1024) { "语音缓存已达 200 MB，请清理缓存后重试" }
+                val temp = File.createTempFile("pending-", ".tmp", cacheDirectory)
+                try { temp.writeBytes(data); check(temp.renameTo(cachedFile)) { "保存缓存失败" } } finally { temp.delete() }
+                cachedFile
             }.onSuccess { file ->
                 mainHandler.post {
-                    if (closed || session !== token || token.get()) { file.delete(); return@post }
+                    if (closed || session !== token || token.get()) return@post
                     ready[part] = segment to file
+                    progress = progress.copy(completed = progress.completed + 1, cached = progress.cached + if (cacheHit) 1 else 0,
+                        characters = progress.characters + segment.text.codePointCount(0, segment.text.length),
+                        audioSeconds = progress.audioSeconds + duration, measuredAt = System.currentTimeMillis(), requestStartedAt = null, phase = if (paused) "已暂停" else "缓存已保存")
+                    if (preparing && progress.completed == progress.total) preparing = false
+                    progress = progress.copy(preparingChapter = preparing)
+                    onProgress(progress)
                     startReadyAudio()
                 }
             }.onFailure { error ->
@@ -205,7 +258,7 @@ class AndroidTtsEngine(
     }
 
     private fun startReadyAudio() {
-        if (closed || session.get() || paused || player != null) return
+        if (closed || session.get() || preparing || paused || player != null) return
         val item = ready.remove(window.played)
         if (item == null) {
             if (sourceEnded && window.played == window.requested) { stop(); onQueueCompleted() }
@@ -225,7 +278,7 @@ class AndroidTtsEngine(
                 if (player === prepared && session === token && !token.get()) {
                     playerPrepared = true
                     if (!paused) {
-                        runCatching { prepared.playbackParams = prepared.playbackParams.setSpeed(selectedRate.coerceIn(0.6f, 1.6f)); prepared.start(); onStatus(null); onSegmentStarted(segment.id) }
+                        runCatching { prepared.playbackParams = prepared.playbackParams.setSpeed(selectedRate.coerceIn(0.6f, 1.6f)); prepared.start(); progress = progress.copy(phase = "正在播放", played = progress.played + 1); onProgress(progress); onStatus(null); onSegmentStarted(segment.id) }
                             .onFailure { fail("远程语音播放失败：${it.localizedMessage}") }
                     }
                 }
@@ -250,7 +303,10 @@ class AndroidTtsEngine(
         if (currentIndex <= queue.lastIndex) playCurrent() else { stop(); onQueueCompleted() }
     }
 
-    private fun fail(message: String) { stop(); onError(message) }
+    private fun fail(message: String) {
+        val failed = progress.copy(phase = "失败，可重试；已完成缓存保留", requestStartedAt = null, measuredAt = System.currentTimeMillis())
+        stop(); onProgress(failed); onError(message)
+    }
 
     private fun releaseOfflineAudio() {
         player?.runCatching {
@@ -260,12 +316,12 @@ class AndroidTtsEngine(
         player = null
         playerPrepared = false
         playingSegmentId = null
-        audioFile?.delete()
         audioFile = null
     }
 
     override fun pause() {
         paused = true
+        progress = progress.copy(phase = "已暂停（当前请求可能仍在完成）"); onProgress(progress)
         if (selectedVoiceId?.startsWith("api:") == true) {
             if (playerPrepared) player?.runCatching { pause() }
         } else { activeUtteranceId = null; tts.stop() }
@@ -274,6 +330,7 @@ class AndroidTtsEngine(
     override fun resume() {
         if (!paused) return
         paused = false
+        progress = progress.copy(phase = if (preparing) "继续缓存本章" else "继续播放"); onProgress(progress)
         val existing = player
         if (selectedVoiceId?.startsWith("api:") == true) {
             if (existing != null && playerPrepared) {
@@ -291,7 +348,7 @@ class AndroidTtsEngine(
         paused = false
         activeUtteranceId = null
         releaseOfflineAudio()
-        ready.values.forEach { it.second.delete() }
+        preparing = false; onProgress(null)
         ready.clear()
         cursor = null
         window = SpeechPrefetchWindow()

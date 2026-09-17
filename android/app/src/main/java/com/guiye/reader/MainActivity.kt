@@ -594,6 +594,7 @@ private fun ReaderScreen(vm: ReaderViewModel) {
                         TextButton(onClick = { showsContents = true }) { Text("章节选择") }
                         TextButton(onClick = { vm.moveChapter(1); scope.launch { listState.scrollToItem(vm.currentParagraph + 1) } }) { Text("下一章") }
                     }
+                    SpeechCachePanel(vm)
                     vm.speechError?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 2) }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(onClick = vm::previous) { Text("上一段") }
@@ -834,4 +835,32 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
         confirmButton = { TextButton(onClick = { settingsMessage = vm.saveSpeechSettings(apiAddress, apiKey) }) { Text("保存") } },
         dismissButton = { TextButton(onClick = { showsAPISettings = false }) { Text("返回音色") } }
     )
+}
+@Composable
+private fun SpeechCachePanel(vm: ReaderViewModel) {
+    var clear by remember { mutableStateOf(false) }
+    if (vm.selectedVoiceId?.startsWith("api:") == true) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = vm::cacheChapter, enabled = vm.speechState == SpeechState.IDLE) { Text("缓存本章 / 重试") }
+            TextButton(onClick = vm::cancelSpeech, enabled = vm.speechState != SpeechState.IDLE) { Text("取消") }
+            TextButton(onClick = { clear = true }) { Text("清理缓存") }
+        }
+        Text("本章正文将发送到所设服务器；请保持前台，首次准备可能较久。", style = MaterialTheme.typography.labelSmall)
+    }
+    vm.speechProgress?.let { progress ->
+        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(progress.startedAt) { while (true) { now = System.currentTimeMillis(); delay(1000) } }
+        val elapsed = (((if (vm.speechState == SpeechState.IDLE) progress.measuredAt else now) - progress.startedAt) / 1000).coerceAtLeast(1)
+        Text(progress.phase + " · 已备 ${progress.completed}" + if (progress.total > 0) "/${progress.total} 段" else " 段", style = MaterialTheme.typography.bodySmall)
+        if (progress.total > 0) LinearProgressIndicator(progress = { progress.fraction }, modifier = Modifier.fillMaxWidth())
+        Text("复用 ${progress.cached} 段 · 耗时 ${elapsed} 秒 · 音频 ${progress.audioSeconds.toInt()} 秒", style = MaterialTheme.typography.labelSmall)
+        progress.requestStartedAt?.let { Text("当前请求等待 ${((now - it) / 1000).coerceAtLeast(0)} 秒（无内部百分比）", style = MaterialTheme.typography.labelSmall) }
+        val speed = progress.characters / ((progress.measuredAt - progress.startedAt) / 1000.0).coerceAtLeast(1.0)
+        Text("准备均速 ${"%.1f".format(speed)} 字/秒（含复用缓存） · 播放第 ${progress.played} 段", style = MaterialTheme.typography.labelSmall)
+        Text(vm.playbackTime, style = MaterialTheme.typography.labelSmall)
+    }
+    if (clear) AlertDialog(onDismissRequest = { clear = false }, title = { Text("清理全部语音缓存？") },
+        text = { Text("会停止当前朗读，下次需重新生成。") },
+        confirmButton = { TextButton(onClick = { clear = false; vm.clearSpeechCache() }) { Text("清理") } },
+        dismissButton = { TextButton(onClick = { clear = false }) { Text("取消") } })
 }

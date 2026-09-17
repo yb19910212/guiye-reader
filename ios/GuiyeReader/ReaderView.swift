@@ -145,6 +145,7 @@ struct ReaderView: View {
         }
     }
 
+    @State private var confirmsSpeechCacheClear = false
     private var speechControls: some View {
         VStack(spacing: 8) {
             HStack {
@@ -153,6 +154,30 @@ struct ReaderView: View {
                 Button("章节选择") { showsContents = true }
                 Spacer()
                 Button("下一章") { model.moveChapter(1) }
+            }
+            if model.selectedVoiceID?.hasPrefix("api:") == true {
+                HStack {
+                    Button("缓存本章后播放 / 重试", action: model.cacheChapter).disabled(model.playbackState != .idle)
+                    Spacer()
+                    Button("取消", action: model.cancelSpeech).disabled(model.playbackState == .idle)
+                    Menu("缓存") { Button("清理全部语音缓存", role: .destructive) { confirmsSpeechCacheClear = true } }
+                }.font(.caption)
+                Text("本章正文将发送到所设服务器；请保持前台，首次准备可能较久。").font(.caption2).foregroundStyle(.secondary)
+            }
+            if let progress = model.speechProgress {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let elapsed = max(1, (model.playbackState == .idle ? progress.measuredAt : context.date).timeIntervalSince(progress.startedAt))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(progress.phase + " · 已备 " + String(progress.completed) + (progress.total > 0 ? "/" + String(progress.total) + " 段" : " 段")).font(.caption)
+                        if progress.total > 0 { ProgressView(value: progress.fraction) }
+                        Text(String(format: "复用 %d 段 · 耗时 %.0f 秒 · 音频 %.0f 秒", progress.cached, elapsed, progress.audioSeconds)).font(.caption2)
+                        if let waiting = progress.requestStartedAt {
+                            Text(String(format: "当前请求等待 %.0f 秒（服务器未提供内部百分比）", max(0, context.date.timeIntervalSince(waiting)))).font(.caption2)
+                        }
+                        Text(String(format: "准备均速 %.1f 字/秒（含复用缓存） · 播放第 %d 段", Double(progress.characters) / max(1, progress.measuredAt.timeIntervalSince(progress.startedAt)), progress.played)).font(.caption2)
+                        Text(model.playbackTime).font(.caption2)
+                    }.monospacedDigit()
+                }
             }
             if let message = model.speechMessage { Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
             HStack {
@@ -181,6 +206,9 @@ struct ReaderView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .background(.ultraThinMaterial)
+        .confirmationDialog("清理全部语音缓存？会停止当前朗读，下次需重新生成。", isPresented: $confirmsSpeechCacheClear) {
+            Button("清理缓存", role: .destructive, action: model.clearSpeechCache)
+        }
         .sheet(isPresented: $showsVoiceLibrary) { VoiceLibraryView(model: model) }
     }
 

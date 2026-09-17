@@ -7,12 +7,22 @@ import Foundation
             var cursor = SpeechChunkCursor(segments: [.init(id: 17, text: text, languageTag: "zh-CN")], from: 0)
             var joined = ""
             while let chunk = cursor.next() {
-                precondition(chunk.id == 17 && chunk.text.count <= 48)
+                precondition(chunk.id == 17 && chunk.text.count <= 80)
                 joined += chunk.text
             }
             precondition(joined == text)
             precondition(cursor.next() == nil)
         }
+        let sentence = String(repeating: "长", count: 70) + "。"
+        var complete = SpeechChunkCursor(segments: [.init(id: 1, text: sentence, languageTag: "zh")], from: 0)
+        precondition(complete.next()?.text == sentence)
+        var wav = Data("RIFF".utf8)
+        func le(_ value: Int, _ count: Int) { for i in 0..<count { wav.append(UInt8((value >> (i * 8)) & 255)) } }
+        le(40, 4); wav.append(contentsOf: "WAVEfmt ".utf8); le(16, 4); le(1, 2); le(1, 2)
+        le(24000, 4); le(48000, 4); le(2, 2); le(16, 2); wav.append(contentsOf: "data".utf8); le(4, 4); le(0, 4)
+        precondition((try? SpeechWAV.duration(wav)) != nil)
+        precondition((try? SpeechWAV.duration(Data(wav.dropLast()))) == nil)
+        precondition((try? SpeechWAV.duration(Data())) == nil)
         var cursor = SpeechChunkCursor(segments: [.init(id: 0, text: "skip", languageTag: "en"), .init(id: 9, text: "read", languageTag: "en")], from: 1)
         precondition(cursor.next()?.id == 9)
         precondition(cursor.next() == nil)

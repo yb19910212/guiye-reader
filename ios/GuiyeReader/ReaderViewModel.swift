@@ -18,6 +18,8 @@ final class ReaderViewModel: ObservableObject {
     @Published var rate: Float = 0.5
     @Published var selectedVoiceID: String?
     @Published private(set) var speechMessage: String?
+    @Published private(set) var speechProgress: SpeechProgress?
+    var playbackTime: String { engine.playbackTime }
     private let engine: SystemSpeechEngine
     private let requestedStartIndex: Int
     private var chapterTask: Task<Void, Never>?
@@ -40,7 +42,8 @@ final class ReaderViewModel: ObservableObject {
         self.requestedStartIndex = startIndex
         self.currentParagraph = min(max(0, startIndex), self.paragraphs.count - 1)
         engine.onSegmentStarted = { [weak self] index in Task { @MainActor in self?.currentParagraph = index } }
-        engine.onQueueCompleted = { [weak self] in Task { @MainActor in self?.playbackState = .idle } }
+        engine.onQueueCompleted = { [weak self] in Task { @MainActor in self?.playbackState = .idle; self?.speechMessage = "本次朗读已完成" } }
+        engine.onProgress = { [weak self] value in Task { @MainActor in self?.speechProgress = value } }
         engine.onStatus = { [weak self] message in Task { @MainActor in self?.speechMessage = message } }
         engine.onError = { [weak self] message in Task { @MainActor in self?.speechMessage = message; self?.playbackState = .idle } }
         loadChapters(normalizedParagraphs)
@@ -89,6 +92,16 @@ final class ReaderViewModel: ObservableObject {
         case .paused: engine.resume(); playbackState = .playing
         }
     }
+    func cacheChapter() {
+        guard selectedVoiceID?.hasPrefix("api:") == true else { return }
+        stopSpeech()
+        let start = chapters.last(where: { $0.index <= currentParagraph })?.index ?? 0
+        let end = chapters.first(where: { $0.index > currentParagraph })?.index ?? paragraphs.count
+        playbackState = .playing
+        engine.prepareChapter(segments: (start..<end).map { SpeechSegment(id: $0, text: paragraphs[$0], languageTag: "zh-CN") }, voiceID: selectedVoiceID, rate: rate)
+    }
+    func clearSpeechCache() { stopSpeech(); engine.clearCache() }
+    func cancelSpeech() { stopSpeech(); speechMessage = "已取消，已完成缓存保留；可重新缓存本章继续" }
     func stopSpeech() {
         speechRestartTask?.cancel(); speechRestartTask = nil
         engine.stop(); playbackState = .idle
@@ -121,7 +134,7 @@ final class ReaderViewModel: ObservableObject {
         playbackState = .playing
         engine.speak(segments: [SpeechSegment(id: currentParagraph, text: sample, languageTag: voice.languageTag)], from: 0, voiceID: voice.id, rate: rate)
     }
-    func updateRate(_ value: Float) { rate = value; restartIfActive(delay: 350_000_000) }
+    func updateRate(_ value: Float) { rate = value; if selectedVoiceID?.hasPrefix("api:") == true { engine.setRate(value) } else { restartIfActive(delay: 350_000_000) } }
     private func restartIfActive(delay: UInt64 = 0) {
         speechRestartTask?.cancel(); speechRestartTask = nil
         guard playbackState != .idle else { return }

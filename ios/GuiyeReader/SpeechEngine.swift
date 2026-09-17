@@ -89,13 +89,17 @@ struct SpeechChunkCursor {
             let segment = segments[paragraph]
             let start = offset ?? segment.text.startIndex
             guard start < segment.text.endIndex else { paragraph += 1; offset = nil; continue }
-            let limit = segment.text.index(start, offsetBy: 48, limitedBy: segment.text.endIndex) ?? segment.text.endIndex
+            let limit = segment.text.index(start, offsetBy: 80, limitedBy: segment.text.endIndex) ?? segment.text.endIndex
             var end = limit
             if limit < segment.text.endIndex {
-                let boundary = segment.text[start..<limit].indices.last { index in
-                    "。！？；，.!?;, \n".contains(segment.text[index]) && segment.text.distance(from: start, to: index) >= 16
+                let indexes = segment.text[start..<limit].indices
+                let sentence = indexes.last { "。！？!?；;".contains(segment.text[$0]) }
+                    ?? indexes.last { segment.text[$0] == "." && segment.text.index(after: $0) < segment.text.endIndex && segment.text[segment.text.index(after: $0)].isWhitespace }
+                let clause = indexes.last { "，,：: ".contains(segment.text[$0]) }
+                if let boundary = sentence ?? clause {
+                    end = segment.text.index(after: boundary)
+                    while end < limit && "”’」』\"".contains(segment.text[end]) { end = segment.text.index(after: end) }
                 }
-                if let boundary { end = segment.text.index(after: boundary) }
             }
             offset = end
             let text = String(segment.text[start..<end])
@@ -104,5 +108,41 @@ struct SpeechChunkCursor {
             }
         }
         return nil
+    }
+}
+
+struct SpeechProgress {
+    var phase = "准备中"
+    var completed = 0
+    var total = 0
+    var cached = 0
+    var played = 0
+    var characters = 0
+    var audioSeconds: Double = 0
+    var measuredAt = Date()
+    var startedAt = Date()
+    var requestStartedAt: Date?
+    var preparingChapter = false
+    var fraction: Double { total == 0 ? 0 : Double(completed) / Double(total) }
+}
+
+enum SpeechWAV {
+    static func duration(_ data: Data) throws -> Double {
+        func number(_ offset: Int, _ count: Int) -> Int {
+            (0..<count).reduce(0) { $0 | Int(data[offset + $1]) << ($1 * 8) }
+        }
+        guard data.count >= 44, data.count <= 8 * 1024 * 1024,
+              String(data: data[0..<4], encoding: .ascii) == "RIFF",
+              String(data: data[8..<12], encoding: .ascii) == "WAVE",
+              String(data: data[12..<16], encoding: .ascii) == "fmt ",
+              number(16, 4) == 16, number(20, 2) == 1, number(22, 2) == 1,
+              number(34, 2) == 16,
+              String(data: data[36..<40], encoding: .ascii) == "data",
+              number(4, 4) + 8 == data.count, number(40, 4) + 44 == data.count,
+              number(40, 4) > 0, number(40, 4) % 2 == 0,
+              number(24, 4) > 0, number(28, 4) == number(24, 4) * 2 else {
+            throw NSError(domain: "SpeechWAV", code: 1, userInfo: [NSLocalizedDescriptionKey: "音频不完整或格式不支持，请重试"])
+        }
+        return Double(number(40, 4)) / Double(number(28, 4))
     }
 }

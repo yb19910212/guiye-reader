@@ -62,20 +62,49 @@ class SpeechChunkCursor(private val segments: List<SpeechSegment>, from: Int) {
             if (offset >= segment.text.length) { paragraph++; offset = 0; continue }
             var count = 0
             var limit = offset
-            while (limit < segment.text.length && count < 48) {
+            while (limit < segment.text.length && count < 80) {
                 limit += Character.charCount(segment.text.codePointAt(limit))
                 count++
             }
             var end = limit
             if (limit < segment.text.length) {
-                val lower = segment.text.offsetByCodePoints(offset, count.coerceAtMost(16))
-                val boundary = (lower until limit).lastOrNull { segment.text[it] in "。！？；，.!?;, \n" }
-                if (boundary != null) end = boundary + 1
+                val sentence = (offset until limit).lastOrNull { segment.text[it] in "。！？!?；;" }
+                    ?: (offset until limit).lastOrNull { segment.text[it] == '.' && it + 1 < segment.text.length && segment.text[it + 1].isWhitespace() }
+                val clause = (offset until limit).lastOrNull { segment.text[it] in "，,：: " }
+                val boundary = sentence ?: clause
+                if (boundary != null) {
+                    end = boundary + 1
+                    while (end < limit && segment.text[end] in "”’」』\"") end++
+                }
             }
             val text = segment.text.substring(offset, end)
             offset = end
             if (text.isNotBlank()) return segment.copy(text = text)
         }
         return null
+    }
+}
+
+data class SpeechProgress(
+    val phase: String = "准备中", val completed: Int = 0, val total: Int = 0,
+    val cached: Int = 0, val played: Int = 0, val characters: Int = 0,
+    val audioSeconds: Double = 0.0, val startedAt: Long = System.currentTimeMillis(), val measuredAt: Long = System.currentTimeMillis(),
+    val requestStartedAt: Long? = null, val preparingChapter: Boolean = false
+) { val fraction get() = if (total == 0) 0f else completed.toFloat() / total }
+
+object SpeechWAV {
+    fun duration(data: ByteArray): Double {
+        fun number(offset: Int, count: Int): Long = (0 until count).fold(0L) { acc, i ->
+            acc or ((data[offset + i].toLong() and 255) shl (i * 8))
+        }
+        require(data.size in 44..8*1024*1024 && String(data, 0, 4, Charsets.US_ASCII) == "RIFF"
+            && String(data, 8, 4, Charsets.US_ASCII) == "WAVE"
+            && String(data, 12, 4, Charsets.US_ASCII) == "fmt "
+            && number(16, 4) == 16L && number(20, 2) == 1L && number(22, 2) == 1L && number(34, 2) == 16L
+            && String(data, 36, 4, Charsets.US_ASCII) == "data"
+            && number(4, 4) + 8 == data.size.toLong() && number(40, 4) + 44 == data.size.toLong()
+            && number(40, 4) > 0 && number(40, 4) % 2 == 0L
+            && number(24, 4) > 0 && number(28, 4) == number(24, 4) * 2) { "音频不完整或格式不支持，请重试" }
+        return number(40, 4).toDouble() / number(28, 4)
     }
 }

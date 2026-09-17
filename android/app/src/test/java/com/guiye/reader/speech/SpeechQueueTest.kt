@@ -11,13 +11,23 @@ class SpeechQueueTest {
             while (true) {
                 val chunk = cursor.next() ?: break
                 assertEquals(17, chunk.id)
-                assertTrue(chunk.text.codePointCount(0, chunk.text.length) <= 48)
+                assertTrue(chunk.text.codePointCount(0, chunk.text.length) <= 80)
                 assertFalse(Character.isHighSurrogate(chunk.text.last()))
                 result.append(chunk.text)
             }
             assertEquals(text, result.toString())
             assertNull(cursor.next())
         }
+    }
+    @Test fun sentenceAndWavIntegrity() {
+        val sentence = "长".repeat(70) + "。"
+        assertEquals(sentence, SpeechChunkCursor(listOf(SpeechSegment(1, sentence, "zh")), 0).next()?.text)
+        val b = java.nio.ByteBuffer.allocate(48).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        b.put("RIFF".toByteArray()).putInt(40).put("WAVEfmt ".toByteArray()).putInt(16).putShort(1).putShort(1)
+        b.putInt(24000).putInt(48000).putShort(2).putShort(16).put("data".toByteArray()).putInt(4).putInt(0)
+        assertTrue(SpeechWAV.duration(b.array()) > 0)
+        assertTrue(runCatching { SpeechWAV.duration(b.array().copyOf(47)) }.isFailure)
+        assertTrue(runCatching { SpeechWAV.duration(byteArrayOf()) }.isFailure)
     }
     @Test fun emptyAndStartIndexAreSafe() {
         assertNull(SpeechChunkCursor(emptyList(), -1).next())
