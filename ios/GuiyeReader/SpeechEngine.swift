@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 struct SpeechVoice: Identifiable, Hashable {
     let id: String
@@ -146,3 +147,28 @@ enum SpeechWAV {
         return Double(number(40, 4)) / Double(number(28, 4))
     }
 }
+actor SpeechDiskCache {
+    static let shared = SpeechDiskCache()
+    private let directory: URL
+    init(directory: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("speech-v2", isDirectory: true)) { self.directory = directory }
+    func file(identity: String) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let name = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory.appendingPathComponent(name + ".wav")
+    }
+    func read(_ file: URL) -> Double? {
+        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8 * 1024 * 1024,
+              let data = try? Data(contentsOf: file), let duration = try? SpeechWAV.duration(data) else { try? FileManager.default.removeItem(at: file); return nil }
+        return duration
+    }
+    func save(_ data: Data, to file: URL) throws -> Double {
+        let duration = try SpeechWAV.duration(data)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])
+        let used = files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        guard used + data.count <= 200 * 1024 * 1024 else { throw NSError(domain: "SpeechCache", code: 1, userInfo: [NSLocalizedDescriptionKey: "语音缓存已达 200 MB，请清理缓存后重试"]) }
+        try data.write(to: file, options: .atomic)
+        return duration
+    }
+    func clear() throws { if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) } }
+}
+

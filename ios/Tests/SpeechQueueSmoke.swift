@@ -1,7 +1,7 @@
 import Foundation
 
 @main struct SpeechQueueSmoke {
-    static func main() {
+    static func main() async throws {
         let texts = ["", "   ", "短句。", String(repeating: "中文😀没有标点", count: 600), "First sentence. Second sentence! 末尾。"]
         for text in texts where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             var cursor = SpeechChunkCursor(segments: [.init(id: 17, text: text, languageTag: "zh-CN")], from: 0)
@@ -23,6 +23,19 @@ import Foundation
         precondition((try? SpeechWAV.duration(wav)) != nil)
         precondition((try? SpeechWAV.duration(Data(wav.dropLast()))) == nil)
         precondition((try? SpeechWAV.duration(Data())) == nil)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("guiye-cache-test-" + UUID().uuidString)
+        let cache = SpeechDiskCache(directory: directory)
+        let file = try await cache.file(identity: "server|voice1|text")
+        let other = try await cache.file(identity: "server|voice4|text")
+        precondition(file != other)
+        let missing = await cache.read(file); precondition(missing == nil)
+        _ = try await cache.save(wav, to: file)
+        let reopened = SpeechDiskCache(directory: directory)
+        let restored = await reopened.read(file); precondition(restored != nil)
+        do { _ = try await cache.save(Data(wav.dropLast()), to: other); preconditionFailure("accepted truncated audio") } catch {}
+        let absent = await cache.read(other); precondition(absent == nil)
+        try await cache.clear()
+        precondition(!FileManager.default.fileExists(atPath: directory.path))
         var cursor = SpeechChunkCursor(segments: [.init(id: 0, text: "skip", languageTag: "en"), .init(id: 9, text: "read", languageTag: "en")], from: 1)
         precondition(cursor.next()?.id == 9)
         precondition(cursor.next() == nil)

@@ -3,30 +3,6 @@ import Foundation
 import Security
 import CryptoKit
 
-private actor SpeechDiskCache {
-    static let shared = SpeechDiskCache()
-    private let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("speech-v2", isDirectory: true)
-    func file(identity: String) throws -> URL {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let name = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
-        return directory.appendingPathComponent(name + ".wav")
-    }
-    func read(_ file: URL) -> Double? {
-        guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8 * 1024 * 1024,
-              let data = try? Data(contentsOf: file), let duration = try? SpeechWAV.duration(data) else { try? FileManager.default.removeItem(at: file); return nil }
-        return duration
-    }
-    func save(_ data: Data, to file: URL) throws -> Double {
-        let duration = try SpeechWAV.duration(data)
-        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])
-        let used = files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
-        guard used + data.count <= 200 * 1024 * 1024 else { throw SpeechAPIError(message: "语音缓存已达 200 MB，请清理缓存后重试") }
-        try data.write(to: file, options: .atomic)
-        return duration
-    }
-    func clear() throws { if FileManager.default.fileExists(atPath: directory.path) { try FileManager.default.removeItem(at: directory) } }
-}
-
 private struct SpeechAPIError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
@@ -147,7 +123,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     owner.progress.phase = "检查本机缓存"
                     owner.progress.requestStartedAt = Date()
                     owner.onProgress?(owner.progress)
-                    let identity = String(data: try JSONSerialization.data(withJSONObject: ["sentence-v2", url.absoluteString, key, voice, segment.text]), encoding: .utf8)!
+                    let identity = String(data: try JSONSerialization.data(withJSONObject: ["sentence-v2", "qwen3-tts-0.6b", url.absoluteString, key, voice, segment.text]), encoding: .utf8)!
                     let cachedFile = try await SpeechDiskCache.shared.file(identity: identity)
                     if let duration = await SpeechDiskCache.shared.read(cachedFile) {
                         try Task.checkCancellation()

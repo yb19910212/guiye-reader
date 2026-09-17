@@ -28,6 +28,19 @@ class SpeechQueueTest {
         assertTrue(SpeechWAV.duration(b.array()) > 0)
         assertTrue(runCatching { SpeechWAV.duration(b.array().copyOf(47)) }.isFailure)
         assertTrue(runCatching { SpeechWAV.duration(byteArrayOf()) }.isFailure)
+        val dir = java.nio.file.Files.createTempDirectory("guiye-cache-test-").toFile()
+        val cache = SpeechDiskCache(dir)
+        try {
+            val first = cache.file("server|voice1|text")
+            val other = cache.file("server|voice4|text")
+            assertNotEquals(first, other)
+            assertNull(cache.read(first))
+            cache.save(b.array(), first)
+            assertNotNull(SpeechDiskCache(dir).read(first))
+            assertTrue(runCatching { cache.save(b.array().copyOf(47), other) }.isFailure)
+            assertNull(cache.read(other))
+        } finally { assertTrue(cache.clear()) }
+        assertFalse(dir.exists())
     }
     @Test fun emptyAndStartIndexAreSafe() {
         assertNull(SpeechChunkCursor(emptyList(), -1).next())
