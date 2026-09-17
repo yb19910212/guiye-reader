@@ -10,6 +10,12 @@ private func labError(_ message: String) -> NSError {
     NSError(domain: "OfflineVoiceLab", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
 }
 
+private var hasBundledLabModel: Bool {
+    OfflineModelFiles.paths.allSatisfy {
+        FileManager.default.fileExists(atPath: Bundle.main.bundleURL.appendingPathComponent("QwenSupport/\($0)").path)
+    }
+}
+
 private final class LabCancellation: @unchecked Sendable {
     private let lock = NSLock()
     private var stopped = false
@@ -46,8 +52,11 @@ private final class LabDownloadProgress: NSObject, URLSessionDownloadDelegate, @
 private actor OfflineLabWorker {
     static let shared = OfflineLabWorker()
     private var model: Qwen3TTSModel?
-    private let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    private let importedDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("QwenLab-0d6bb6fe-v1", isDirectory: true)
+    private var directory: URL {
+        hasBundledLabModel ? Bundle.main.bundleURL.appendingPathComponent("QwenSupport") : importedDirectory
+    }
 
     private func hash(_ file: URL) throws -> String {
         let stream = try FileHandle(forReadingFrom: file)
@@ -65,6 +74,17 @@ private actor OfflineLabWorker {
         let support = Bundle.main.bundleURL.appendingPathComponent("QwenSupport")
         let manifest = try JSONDecoder().decode(LabManifest.self, from: Data(contentsOf: support.appendingPathComponent("manifest.json")))
         guard manifest.revision == "0d6bb6fe33f92d47a507e23b9148940e8366ab5b" else { throw labError("模型版本不匹配") }
+        if hasBundledLabModel {
+            // Read-only verification in the app bundle: no copying and no network.
+            for entry in manifest.files {
+                try Task.checkCancellation()
+                report("校验内置资源 \(entry.path)（无需联网）")
+                guard try hash(support.appendingPathComponent(entry.path)) == entry.sha256 else {
+                    throw labError("内置模型损坏：\(entry.path)。请重新安装完整包，无需在应用内下载。")
+                }
+            }
+            return
+        }
         let manager = FileManager.default
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true
@@ -125,6 +145,7 @@ private actor OfflineLabWorker {
     }
 
     func importFile(_ url: URL, path: String, report: @escaping @Sendable (String) -> Void) async throws {
+        guard !hasBundledLabModel else { throw labError("完整内置版无需导入，请校验内置模型") }
         release()
         guard OfflineModelFiles.paths.contains(path) else { throw labError("无效模型类型") }
         let support = Bundle.main.bundleURL.appendingPathComponent("QwenSupport")
@@ -197,7 +218,7 @@ private final class OfflineLabState: ObservableObject {
     private var cancellation = LabCancellation()
     private var player: AVAudioPlayer?
 
-    func prepare(source: String, custom: String) { begin(label: "下载/校验") { report, _ in
+    func prepare(source: String, custom: String) { begin(label: hasBundledLabModel ? "内置模型校验" : "下载/校验") { report, _ in
         try await OfflineLabWorker.shared.prepare(source: source, custom: custom, report: report)
         return nil
     } }
@@ -206,7 +227,7 @@ private final class OfflineLabState: ObservableObject {
         return nil
     } }
     func test(reference: String, text: String) {
-        guard ready else { status = "请先下载并校验模型"; return }
+        guard ready else { status = hasBundledLabModel ? "请先校验内置模型，无需下载" : "请先下载并校验模型"; return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 40 else { status = "请输入 1–40 字测试句"; return }
         guard ProcessInfo.processInfo.thermalState != .serious, ProcessInfo.processInfo.thermalState != .critical else { status = "设备温度较高，请降温后再试"; return }
         begin(label: "语音测试") { report, token in try await OfflineLabWorker.shared.test(reference: reference, text: text, cancellation: token, report: report) }
@@ -266,8 +287,14 @@ struct OfflineVoiceLab: View {
         NavigationStack {
             Form {
                 Section("独立实验，不接管阅读器") {
-                    Text("模型约 1.7 GB，可用 Wi-Fi 或蜂窝网络下载，也可从文件导入。建议预留 4 GB 空间，保持页面在前台。校验后可断网试听；不上传正文，尚未通过真机性能验收。")
+                    if hasBundledLabModel {
+                        Text("主模型、语音解码器、分词器及 1号/4号参考音色已完整内置。无需下载或导入，先校验内置文件，再断网试听。模型仅在测试时加载，不随阅读器启动。尚未通过真机性能验收。")
+                        Button("校验内置模型（无需联网）") { state.prepare(source: "official", custom: "") }.disabled(state.busy)
+                    } else {
+                        Text("模型约 1.7 GB，可用 Wi-Fi 或蜂窝网络下载，也可从文件导入。建议预留 4 GB 空间，保持页面在前台。校验后可断网试听；不上传正文，尚未通过真机性能验收。")
+                    }
                 }
+                if !hasBundledLabModel {
                 Section("下载源") {
                     Picker("来源", selection: $source) {
                         Text("Hugging Face 官方").tag("official")
@@ -287,6 +314,7 @@ struct OfflineVoiceLab: View {
                     Button("导入语音解码器（约 682 MB）") { importPath = "speech_tokenizer/model.safetensors"; importsModel = true }.disabled(state.busy)
                     if let url = try? OfflineModelFiles.sourceURL(path: "model.safetensors", source: source, custom: custom) { Link("在浏览器打开主模型下载", destination: url) }
                     if let url = try? OfflineModelFiles.sourceURL(path: "speech_tokenizer/model.safetensors", source: source, custom: custom) { Link("在浏览器打开解码器下载", destination: url) }
+                }
                 }
                 Section("短句测试") {
                     Picker("参考音色", selection: $reference) {

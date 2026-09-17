@@ -1,5 +1,20 @@
 # iOS offline voice lab
 
+## v0.17.2 complete bundled edition
+- Both pinned MLX weights (~1.7 GB uncompressed), converted tokenizer/configs,
+  original 1/4 reference recordings, model attribution and Apache-2.0 license are
+  bundled inside the IPA. Standard Android/lite builds remain unchanged.
+- The complete workflow removes `--support-only`; the generated manifest has no
+  remote-file URLs. Build downloads verify the existing pinned weight hashes.
+- The lab verifies all bundled files off MainActor, before any URLSession or
+  writable model directory is created. It loads weights directly from QwenSupport
+  in the app bundle and does not duplicate them under Application Support.
+- Downloads/import UI is hidden in the full edition. Start with "校验内置模型",
+  then test voice 1/4 offline. No automatic model loading on library startup.
+- Final IPA validation streams SHA256 over all packaged resources, including both
+  weights, and checks version 0.17.2/build 24. Device inference remains unverified;
+  bundling fixes delivery, not model speed or OS memory limits.
+
 ## v0.17.1 model import and source selection
 - Published as https://github.com/yb19910212/guiye-reader/releases/tag/ios-lab-2
   from `37a660e7b7cef7b73fc25e323fedc37b2252386b`; Actions `35224102009` succeeded.

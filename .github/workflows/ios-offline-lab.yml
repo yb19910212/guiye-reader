@@ -30,10 +30,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Prepare and validate tokenizer without model weights
+      - name: Download and verify complete pinned model
         run: |
           pip install transformers==4.57.3 tokenizers==0.22.2
-          python scripts/prepare_qwen_model.py ios/GuiyeReader/QwenSupport --support-only
+          python scripts/prepare_qwen_model.py ios/GuiyeReader/QwenSupport
       - name: Run Swift tokenizer parity test before app build
         run: swift run --package-path scripts/qwen-tokenizer-smoke QwenTokenizerSmoke "$PWD/ios/GuiyeReader/QwenSupport"
       - name: Existing reader regression tests
@@ -59,6 +59,7 @@ jobs:
           name: GuiyeReader-ios-offline-lab
           path: ios/GuiyeReader-ios-offline-lab-unsigned.ipa
           retention-days: 3
+          compression-level: 0
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ios-lab-${{ github.run_number }}
@@ -67,11 +68,11 @@ jobs:
           prerelease: true
           body: |
             独立实验版，非流畅度验收通过的正式版。Android 及现有轻量版不变。
-            v0.17.1：支持两个权重文件分别导入、官方/第三方镜像/自定义 HTTPS 下载源。
-            明确允许蜂窝下载；连接状态、两次有界尝试、校验安装、复用已完成文件。未完成的单个大文件暂不支持断点续传。
-            书库 → 更多 → 离线语音实验室：主动下载/校验后可断网测试 1号、4号。
+            v0.17.2 完整内置版：两个模型权重、分词器、1号/4号参考音色全部打入 IPA。
+            安装后无需再下载或导入模型。直接读取包内资源，不额外复制权重，不随阅读器启动加载。
+            书库 → 更多 → 离线语音实验室 → 校验内置模型，再断网测试 1号、4号。
             修复 tokenizer.json 缺失：从固定版本词表生成并通过 Swift/Python 分词一致性检查。
-            不内置大模型权重、不自动加载；先校验、后台串行推理、取消/退出释放、状态与耗时显示。
+            模型原始文件约 1.7 GB，安装及签名请预留足够空间。包内权重按固定 SHA256 校验。
             API 朗读保留，实验功能暂不接管正文朗读。尚需 iPhone 真机试听、内存和发热验收。
             iOS 未签名 IPA，需要自行签名安装。
           files: ios/GuiyeReader-ios-offline-lab-unsigned.ipa

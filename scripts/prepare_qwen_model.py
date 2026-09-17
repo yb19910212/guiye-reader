@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 import sys
 import urllib.request
+import socket
+
+socket.setdefaulttimeout(120)
 
 REVISION = "0d6bb6fe33f92d47a507e23b9148940e8366ab5b"
 BASE = f"https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit/resolve/{REVISION}/"
@@ -64,10 +67,16 @@ def main():
         assert fast.convert_tokens_to_ids(token) == expected, token
     fast.backend_tokenizer.save(str(target / 'tokenizer.json'))
     (target / 'tokenizer-fixtures.json').write_text(json.dumps(fixtures, ensure_ascii=False), encoding='utf-8')
+    urllib.request.urlretrieve('https://www.apache.org/licenses/LICENSE-2.0.txt', target / 'MODEL-LICENSE.txt')
+    (target / 'MODEL-NOTICE.txt').write_text(
+        'Qwen3-TTS-12Hz-0.6B-Base-4bit\nPublisher: mlx-community; original model: Qwen/Qwen3-TTS-12Hz-0.6B-Base\n'
+        f'Revision: {REVISION}\nLicense: Apache-2.0\n'
+        'https://huggingface.co/mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit\n'
+        'tokenizer.json is converted from the pinned vocabulary for Swift compatibility.\n', encoding='utf-8')
     entries = []
-    for name in FILES + ['tokenizer.json', 'tokenizer-fixtures.json']:
+    for name in FILES + ['tokenizer.json', 'tokenizer-fixtures.json', 'MODEL-LICENSE.txt', 'MODEL-NOTICE.txt']:
         entries.append(dict(path=name, sha256=HASHES.get(name) or digest(target / name),
-                            url=BASE + name if name in HASHES else None))
+                            url=BASE + name if name in HASHES and args.support_only else None))
     (target / 'manifest.json').write_text(json.dumps(dict(revision=REVISION, files=entries), indent=2), encoding='utf-8')
     print('Swift tokenizer generated; slow/fast IDs and TTS special tokens verified', flush=True)
 
