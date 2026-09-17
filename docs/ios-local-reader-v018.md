@@ -21,3 +21,13 @@
 ## 性能预期
 
 预缓冲减少段间空等，但不提高模型固有速度。高倍速、设备发热或复杂文本可能耗尽缓冲；优先1×，或先缓存本章后播放。正文生成有120秒单段保护和384帧上限，达到上限报错而不播放截断音频。
+
+## 发布核验（2026-09-17）
+
+- 源码：`b2553bf8ce27b7b889c83f4b64812a51aacc0d6f`；v0.18.0 / build25。
+- Actions `35232247886` 全部成功：Swift 分词一致性、模型文件回归、TXT 回归、朗读队列回归、Xcode 编译、IPA 校验和发布。
+- 最终 Release：https://github.com/yb19910212/guiye-reader/releases/tag/ios-lab-6 （非草稿、预发布）。
+- 下载最终资产 `GuiyeReader-ios-offline-lab-unsigned.ipa`，字节数 `1471219188` 与 GitHub 一致。
+- SHA256：`63a0ed23b5eaa3deb04a4ab0d1e62462d9024d3ae354369e6dfaa0f2845ff0d0`。
+- 对下载后的最终包再次执行 verify_qwen_lab.py：版本、全部资源哈希、两个权重固定哈希、分词器、Metal、参考音频、ZIP CRC 均通过。
+- 当前修改没有进行 iPhone 连续正文实测；Android 本轮未修改或重建。iOS IPA 未签名。
