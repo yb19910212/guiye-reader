@@ -22,3 +22,5 @@ ios/GuiyeReader/KokoroModel/*
 !ios/GuiyeReader/KokoroModel/.gitkeep
 ios/GuiyeReader/QwenModel/*
 !ios/GuiyeReader/QwenModel/.gitkeep
+ios/GuiyeReader/QwenSupport/
+scripts/qwen-tokenizer-smoke/.build/

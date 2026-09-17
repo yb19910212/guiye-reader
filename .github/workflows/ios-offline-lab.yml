@@ -1,0 +1,71 @@
+name: iOS Offline Voice Lab
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/api-voice-lite]
+    paths:
+      - '.github/workflows/ios-offline-lab.yml'
+      - 'ios/GuiyeReader/OfflineVoiceLab.swift'
+      - 'scripts/prepare_qwen_model.py'
+      - 'scripts/configure_qwen_lab.py'
+      - 'scripts/verify_qwen_lab.py'
+      - 'scripts/qwen-tokenizer-smoke/**'
+      - 'vendor/Qwen3TTS/**'
+permissions:
+  contents: write
+concurrency:
+  group: ios-offline-lab
+  cancel-in-progress: true
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v5
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '16.4'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare and validate tokenizer without model weights
+        run: |
+          pip install transformers==4.57.3 tokenizers==0.22.2
+          python scripts/prepare_qwen_model.py ios/GuiyeReader/QwenSupport --support-only
+      - name: Run Swift tokenizer parity test before app build
+        run: swift run --package-path scripts/qwen-tokenizer-smoke QwenTokenizerSmoke "$PWD/ios/GuiyeReader/QwenSupport"
+      - name: Existing reader regression tests
+        run: |
+          xcrun swiftc ios/GuiyeReader/TXTParser.swift ios/Tests/TXTParserSmoke.swift -o /tmp/txt-smoke
+          /tmp/txt-smoke
+          xcrun swiftc ios/GuiyeReader/SpeechEngine.swift ios/Tests/SpeechQueueSmoke.swift -o /tmp/queue-smoke
+          /tmp/queue-smoke
+      - name: Enable isolated lab and build unsigned app
+        run: |
+          python scripts/configure_qwen_lab.py
+          xcodebuild -project ios/GuiyeReader.xcodeproj -scheme GuiyeReader -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' CONFIGURATION_BUILD_DIR="$PWD/ios/build-unsigned" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Package and verify experimental IPA
+        run: |
+          mkdir -p ios/package/Payload
+          cp -R ios/build-unsigned/GuiyeReader.app ios/package/Payload/
+          (cd ios/package && zip -qry ../GuiyeReader-ios-offline-lab-unsigned.ipa Payload)
+          python scripts/verify_qwen_lab.py ios/GuiyeReader-ios-offline-lab-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GuiyeReader-ios-offline-lab
+          path: ios/GuiyeReader-ios-offline-lab-unsigned.ipa
+          retention-days: 3
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-lab-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: iOS 离线语音实验版 ${{ github.run_number }}
+          prerelease: true
+          body: |
+            独立实验版，非流畅度验收通过的正式版。Android 及现有轻量版不变。
+            书库 → 更多 → 离线语音实验室：主动下载/校验后可断网测试 1号、4号。
+            修复 tokenizer.json 缺失：从固定版本词表生成并通过 Swift/Python 分词一致性检查。
+            不内置大模型权重、不自动加载；先校验、后台串行推理、取消/退出释放、状态与耗时显示。
+            API 朗读保留，实验功能暂不接管正文朗读。尚需 iPhone 真机试听、内存和发热验收。
+            iOS 未签名 IPA，需要自行签名安装。
+          files: ios/GuiyeReader-ios-offline-lab-unsigned.ipa

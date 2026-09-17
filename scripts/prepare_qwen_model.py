@@ -1,5 +1,7 @@
 """Fetch pinned, Apache-2.0 mobile model resources at build time, never at runtime."""
 import hashlib
+import argparse
+import json
 from pathlib import Path
 import sys
 import urllib.request
@@ -24,8 +26,14 @@ def digest(path):
     return result.hexdigest()
 
 def main():
-    target = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('target', type=Path)
+    parser.add_argument('--support-only', action='store_true', help='Bundle metadata; download weights only on user request')
+    args = parser.parse_args()
+    target = args.target.resolve()
     for name in FILES:
+        if args.support_only and name in HASHES:
+            continue
         path = target / name
         path.parent.mkdir(parents=True, exist_ok=True)
         if name in HASHES and path.exists() and digest(path) == HASHES[name]:
@@ -36,7 +44,32 @@ def main():
         if name in HASHES and digest(partial) != HASHES[name]:
             raise RuntimeError("Model checksum mismatch: " + name)
         partial.replace(path)
-    print("Pinned Qwen model downloaded and weight checksums verified", flush=True)
+    # This pinned upstream revision contains vocab/merges but NO tokenizer.json.
+    # swift-transformers requires the unified fast-tokenizer representation.
+    # Convert the exact local vocabulary, including all TTS special-token IDs.
+    from transformers import Qwen2Tokenizer, Qwen2TokenizerFast
+    slow = Qwen2Tokenizer.from_pretrained(target, local_files_only=True)
+    fast = Qwen2TokenizerFast.from_pretrained(target, local_files_only=True)
+    cases = ['你好，今天我们一起读书。', '温柔一点，别着急。', 'Hello, 123! café',
+             '<|im_start|>assistant\n<tts_text_bos>你好<tts_text_eod><|im_end|>',
+             '第一章\n夜色安静下来。🙂', '你回来啦，今天辛苦了。']
+    fixtures = []
+    for text in cases:
+        ids = fast.encode(text, add_special_tokens=False)
+        assert ids == slow.encode(text, add_special_tokens=False), text
+        fixtures.append(dict(text=text, ids=ids))
+    for token, expected in {'<|im_start|>':151644, '<|im_end|>':151645,
+                            '<tts_pad>':151671, '<tts_text_bos>':151672,
+                            '<tts_text_eod>':151673}.items():
+        assert fast.convert_tokens_to_ids(token) == expected, token
+    fast.backend_tokenizer.save(str(target / 'tokenizer.json'))
+    (target / 'tokenizer-fixtures.json').write_text(json.dumps(fixtures, ensure_ascii=False), encoding='utf-8')
+    entries = []
+    for name in FILES + ['tokenizer.json', 'tokenizer-fixtures.json']:
+        entries.append(dict(path=name, sha256=HASHES.get(name) or digest(target / name),
+                            url=BASE + name if name in HASHES else None))
+    (target / 'manifest.json').write_text(json.dumps(dict(revision=REVISION, files=entries), indent=2), encoding='utf-8')
+    print('Swift tokenizer generated; slow/fast IDs and TTS special tokens verified', flush=True)
 
 if __name__ == "__main__":
     main()

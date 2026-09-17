@@ -20,6 +20,9 @@ struct LibraryView: View {
     @State private var showsStats = false
     @State private var showsPlans = false
     @State private var showsReminder = false
+#if QWEN_LAB
+    @State private var showsOfflineLab = false
+#endif
     @State private var editingBook: Book?
     @State private var selectedBookIDs: Set<String> = []
     @State private var editMode: EditMode = .inactive
@@ -53,6 +56,9 @@ struct LibraryView: View {
                             Button { showsReminder = true } label: { Label("每日提醒", systemImage: "bell.badge") }
                         }
                         Section("设置") {
+#if QWEN_LAB
+                            Button { showsOfflineLab = true } label: { Label("离线语音实验室", systemImage: "waveform") }
+#endif
                             Button { showsAISettings = true } label: { Label("AI", systemImage: "sparkles") }
                             Button { showsThemes = true } label: { Label("主题", systemImage: "paintpalette") }
                         }
@@ -82,6 +88,9 @@ struct LibraryView: View {
                 }
                 .sheet(isPresented: $showsNotes) { NotesView(books: repository.books) }
                 .sheet(isPresented: $showsAISettings) { AISettingsView() }
+#if QWEN_LAB
+                .sheet(isPresented: $showsOfflineLab) { OfflineVoiceLab() }
+#endif
                 .sheet(isPresented: $showsThemes) { ThemeSettingsView().environmentObject(theme) }
                 .sheet(isPresented: $showsOPDS) { OPDSCatalogView(repository: repository) }
                 .sheet(isPresented: $showsRemoteLibrary) { RemoteLibraryView(repository: repository) }

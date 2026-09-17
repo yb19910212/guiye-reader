@@ -1387,6 +1387,19 @@ public class Qwen3TTSModel: Module {
         if shouldCancel?() == true { throw CancellationError() }
         let modelDir = URL(fileURLWithPath: modelPath)
 
+        // Fail before allocating/evaluating any model weights. The upstream
+        // snapshot provides vocab+merges, but Swift needs a converted tokenizer.json.
+        for relative in ["config.json", "tokenizer.json", "tokenizer_config.json",
+                         "model.safetensors", "speech_tokenizer/config.json",
+                         "speech_tokenizer/model.safetensors"] {
+            let url = modelDir.appendingPathComponent(relative)
+            guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0 else {
+                throw Qwen3TTSError.generationFailed("离线模型文件缺失或为空：\(relative)。请在离线测试页重新校验/下载模型。")
+            }
+        }
+        let validatedTokenizer = try await AutoTokenizer.from(modelFolder: modelDir)
+        if shouldCancel?() == true { throw CancellationError() }
+
         // Load config
         let configPath = modelDir.appendingPathComponent("config.json")
         let configData = try Data(contentsOf: configPath)
@@ -1413,6 +1426,7 @@ public class Qwen3TTSModel: Module {
 
         // Create model
         let model = Qwen3TTSModel(config)
+        model.tokenizer = validatedTokenizer
 
         // Quantize model layers to match weight format
         if let quantization = config.quantization {
