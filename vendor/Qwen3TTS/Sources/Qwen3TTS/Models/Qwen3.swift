@@ -1170,6 +1170,11 @@ public class Qwen3TTSModel: Module {
             throw Qwen3TTSError.generationFailed("No tokens generated")
         }
 
+        // Exhausting the adaptive cap is not EOS. Never cache truncated narration.
+        guard generatedCodes.count < effectiveMaxTokens else {
+            throw Qwen3TTSError.generationFailed("语音未完整结束，已拒绝播放截断音频。请重试或切换系统语音。")
+        }
+
         // 4. Stack generated codes: [batch, seq_len, num_code_groups]
         let genCodesStacked = MLX.stacked(
             generatedCodes.map { codes in MLX.concatenated(codes, axis: 1) },
