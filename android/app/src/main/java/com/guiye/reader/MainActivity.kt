@@ -769,6 +769,7 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
     val apiSettings = remember { com.guiye.reader.speech.RemoteSpeechSettings(context) }
     var apiAddress by remember { mutableStateOf(apiSettings.address) }
     var apiKey by remember { mutableStateOf(apiSettings.key) }
+    var showsAPISettings by remember { mutableStateOf(false) }
     var settingsMessage by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
     var language by remember { mutableStateOf("all") }
@@ -784,11 +785,7 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
         text = { Column(Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
             Text("外置 API 语音 · 轻量版", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             Text("主动朗读时会向设置的服务器发送正文。手机不再加载大模型；NAS 生成较慢时需要等待，系统语音仍可使用。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-            OutlinedTextField(apiAddress, { apiAddress = it }, label = { Text("HTTPS 服务器地址") }, singleLine = true)
-            OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API 密钥") }, singleLine = true,
-                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
-            TextButton(onClick = { settingsMessage = vm.saveSpeechSettings(apiAddress, apiKey) }) { Text("保存连接设置") }
-            if (settingsMessage.isNotEmpty()) Text(settingsMessage, style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { showsAPISettings = true }) { Text("服务器地址 / API 密钥") }
             vm.speechError?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             HorizontalDivider(Modifier.padding(vertical = 6.dp))
             OutlinedTextField(query, { query = it }, label = { Text("搜索音色或语言") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -822,5 +819,19 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
             Text("密钥使用设备密钥加密保存，不随书库备份导出。", style = MaterialTheme.typography.bodySmall)
         } },
         confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
+    )
+
+    if (showsAPISettings) AlertDialog(
+        onDismissRequest = { showsAPISettings = false },
+        title = { Text("语音服务器设置") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+            OutlinedTextField(apiAddress, { apiAddress = it }, label = { Text("HTTPS 服务器地址") }, singleLine = true)
+            OutlinedTextField(apiKey, { apiKey = it }, label = { Text("API 密钥") }, singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+            Text("主动朗读会向此地址发送所选正文。请仅连接你信任的服务。", style = MaterialTheme.typography.bodySmall)
+            if (settingsMessage.isNotEmpty()) Text(settingsMessage, style = MaterialTheme.typography.bodySmall)
+        } },
+        confirmButton = { TextButton(onClick = { settingsMessage = vm.saveSpeechSettings(apiAddress, apiKey) }) { Text("保存") } },
+        dismissButton = { TextButton(onClick = { showsAPISettings = false }) { Text("返回音色") } }
     )
 }

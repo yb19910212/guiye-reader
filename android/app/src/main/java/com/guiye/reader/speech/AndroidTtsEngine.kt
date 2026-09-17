@@ -209,6 +209,7 @@ class AndroidTtsEngine(
         val item = ready.remove(window.played)
         if (item == null) {
             if (sourceEnded && window.played == window.requested) { stop(); onQueueCompleted() }
+            else onStatus("等待下一段语音，可继续阅读或暂停")
             return
         }
         val (segment, file) = item

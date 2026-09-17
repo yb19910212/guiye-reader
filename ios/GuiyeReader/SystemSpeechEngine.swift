@@ -99,7 +99,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                         try await Task.sleep(nanoseconds: 150_000_000)
                     }
                     guard let owner = self, owner.generationID == id else { return }
-                    var request = URLRequest(url: url)
+                    var request = URLRequest(url: url, timeoutInterval: 300)
                     request.httpMethod = "POST"
                     request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -107,11 +107,15 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                         "model": "qwen3-tts-0.6b", "input": segment.text, "voice": voice, "response_format": "wav", "speed": 1])
                     var audio: Data?
                     for attempt in 0..<16 {
-                        let (data, response) = try await owner.client.data(for: request)
+                        let (file, response) = try await owner.client.download(for: request)
+                        defer { try? FileManager.default.removeItem(at: file) }
                         try Task.checkCancellation()
                         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                         if status == 429 && attempt < 15 { try await Task.sleep(nanoseconds: 2_000_000_000); continue }
                         guard status == 200 else { throw SpeechAPIError(message: status == 401 ? "API 密钥无效" : "语音服务暂不可用（HTTP " + String(status) + "），可切换系统语音") }
+                        let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                        guard size > 44, size <= 8 * 1024 * 1024 else { throw SpeechAPIError(message: "音频大小异常") }
+                        let data = try Data(contentsOf: file, options: .mappedIfSafe)
                         guard data.count > 44, data.count <= 8 * 1024 * 1024,
                               String(data: data.prefix(4), encoding: .ascii) == "RIFF" else { throw SpeechAPIError(message: "返回的音频格式无效") }
                         audio = data; break
