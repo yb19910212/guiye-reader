@@ -125,6 +125,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+          target_commitish: ${{ github.sha }}
           name: Guiye Reader ${{ github.ref_type == 'tag' && github.ref_name || format('Build {0}', github.run_number) }}
           generate_release_notes: true
           prerelease: true

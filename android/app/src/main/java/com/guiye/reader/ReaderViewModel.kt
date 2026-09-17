@@ -64,7 +64,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         private set
     var textChapters by mutableStateOf(TextParser.chapters(sampleParagraphs))
         private set
-    private val segments get() = paragraphs.mapIndexed { i, text -> SpeechSegment(i, text, detectLanguage(text)) }
+    private var cachedSpeechParagraphs: List<String>? = null
+    private var cachedSpeechSegments: List<SpeechSegment> = emptyList()
+    private val segments: List<SpeechSegment> get() {
+        if (cachedSpeechParagraphs !== paragraphs) {
+            cachedSpeechSegments = paragraphs.mapIndexed { i, text -> SpeechSegment(i, text, detectLanguage(text)) }
+            cachedSpeechParagraphs = paragraphs
+        }
+        return cachedSpeechSegments
+    }
 
     var currentParagraph by mutableIntStateOf(0)
     var speechState by mutableStateOf(SpeechState.IDLE)
@@ -185,7 +193,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun closeBook() { flushTextPosition(); stopSpeech(); currentBook = null; paragraphs = sampleParagraphs; textChapters = TextParser.chapters(sampleParagraphs) }
-    private fun stopSpeech() { speechRestartJob?.cancel(); speechRestartJob = null; engine.stop(); speechState = SpeechState.IDLE }
+    private fun stopSpeech() {
+        speechRestartJob?.cancel(); speechRestartJob = null
+        engine.stop(); speechState = SpeechState.IDLE
+        cachedSpeechParagraphs = null; cachedSpeechSegments = emptyList()
+    }
 
     fun selectParagraph(index: Int) {
         currentParagraph = index.coerceIn(0, paragraphs.lastIndex.coerceAtLeast(0))

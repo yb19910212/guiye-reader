@@ -1383,7 +1383,8 @@ public class Qwen3TTSModel: Module {
     /// - Parameter modelPath: Local directory path containing config.json and safetensors files
     ///   (e.g. "/path/to/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16")
     /// - Returns: The loaded model ready for generation
-    public static func fromPretrained(_ modelPath: String) async throws -> Qwen3TTSModel {
+    public static func fromPretrained(_ modelPath: String, shouldCancel: (() -> Bool)? = nil) async throws -> Qwen3TTSModel {
+        if shouldCancel?() == true { throw CancellationError() }
         let modelDir = URL(fileURLWithPath: modelPath)
 
         // Load config
@@ -1398,6 +1399,7 @@ public class Qwen3TTSModel: Module {
         let safetensorFiles = files.filter { $0.pathExtension == "safetensors" }
 
         for file in safetensorFiles {
+            if shouldCancel?() == true { throw CancellationError() }
             let fileWeights = try MLX.loadArrays(url: file)
             weights.merge(fileWeights) { _, new in new }
         }
@@ -1447,20 +1449,23 @@ public class Qwen3TTSModel: Module {
             debugPrint("🔊 Loaded pruned vocabulary token map: \(tokenMap.shape)")
         }
 
+        if shouldCancel?() == true { throw CancellationError() }
         eval(model)
 
         // Post-load hook
-        try await model.postLoadHook(modelDir: modelDir)
+        try await model.postLoadHook(modelDir: modelDir, shouldCancel: shouldCancel)
 
         return model
     }
 
     /// Post-load initialization
-    public func postLoadHook(modelDir: URL) async throws {
+    public func postLoadHook(modelDir: URL, shouldCancel: (() -> Bool)? = nil) async throws {
+        if shouldCancel?() == true { throw CancellationError() }
         // Load tokenizer
         if tokenizer == nil {
             tokenizer = try await AutoTokenizer.from(modelFolder: modelDir)
         }
+        if shouldCancel?() == true { throw CancellationError() }
 
         // Load speech tokenizer
         let speechTokenizerPath = modelDir.appendingPathComponent("speech_tokenizer")
@@ -1479,6 +1484,7 @@ public class Qwen3TTSModel: Module {
             let safetensorFiles = files.filter { $0.pathExtension == "safetensors" }
 
             for file in safetensorFiles {
+                if shouldCancel?() == true { throw CancellationError() }
                 let fileWeights = try MLX.loadArrays(url: file)
                 tokenizerWeights.merge(fileWeights) { _, new in new }
             }
@@ -1489,6 +1495,7 @@ public class Qwen3TTSModel: Module {
             // Load weights
             let unflattened = ModuleParameters.unflattened(sanitizedWeights)
             try tokenizer.update(parameters: unflattened, verify: [])
+            if shouldCancel?() == true { throw CancellationError() }
             eval(tokenizer)
 
             // Initialize encoder codebooks (compute embeddings from raw data)

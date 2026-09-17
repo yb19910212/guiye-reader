@@ -86,6 +86,10 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         self.voiceID = voiceID
         self.rate = rate
         intentionallyPaused = false
+        if voiceID?.hasPrefix("qwen:") == true && UIApplication.shared.applicationState != .active {
+            fail("Qwen 实验版暂限前台使用，请返回应用后重试。")
+            return
+        }
         if isNeuralVoice {
             cursor = SpeechChunkCursor(segments: segments, from: currentIndex)
         } else {
@@ -340,7 +344,7 @@ private enum QwenOfflineRuntime {
             let box = LoadResult()
             let semaphore = DispatchSemaphore(value: 0)
             Task.detached(priority: .userInitiated) {
-                do { box.value = .success(try await Qwen3TTSModel.fromPretrained(path.path)) }
+                do { box.value = .success(try await Qwen3TTSModel.fromPretrained(path.path, shouldCancel: { token.isCancelled })) }
                 catch { box.value = .failure(error) }
                 semaphore.signal()
             }

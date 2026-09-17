@@ -60,8 +60,12 @@ class SpeechChunkCursor(private val segments: List<SpeechSegment>, from: Int) {
         while (paragraph < segments.size) {
             val segment = segments[paragraph]
             if (offset >= segment.text.length) { paragraph++; offset = 0; continue }
-            val count = segment.text.codePointCount(offset, segment.text.length).coerceAtMost(48)
-            val limit = segment.text.offsetByCodePoints(offset, count)
+            var count = 0
+            var limit = offset
+            while (limit < segment.text.length && count < 48) {
+                limit += Character.charCount(segment.text.codePointAt(limit))
+                count++
+            }
             var end = limit
             if (limit < segment.text.length) {
                 val lower = segment.text.offsetByCodePoints(offset, count.coerceAtMost(16))

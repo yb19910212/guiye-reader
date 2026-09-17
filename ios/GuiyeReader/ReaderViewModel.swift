@@ -22,7 +22,13 @@ final class ReaderViewModel: ObservableObject {
     private let requestedStartIndex: Int
     private var speechRestartTask: Task<Void, Never>?
     var voices: [SpeechVoice] { engine.voices }
-    private var segments: [SpeechSegment] { paragraphs.enumerated().map { SpeechSegment(id: $0.offset, text: $0.element, languageTag: detectedLanguage(for: $0.element)) } }
+    private var cachedSpeechSegments: [SpeechSegment]?
+    private var segments: [SpeechSegment] {
+        if let cachedSpeechSegments { return cachedSpeechSegments }
+        let values = paragraphs.enumerated().map { SpeechSegment(id: $0.offset, text: $0.element, languageTag: detectedLanguage(for: $0.element)) }
+        cachedSpeechSegments = values
+        return values
+    }
 
     init(title: String = "为什么阅读需要一个闭环", paragraphs: [String] = ReaderViewModel.sampleParagraphs, startIndex: Int = 0, engine: SystemSpeechEngine = SystemSpeechEngine()) {
         let normalizedParagraphs = paragraphs.isEmpty ? ["文件内容为空"] : paragraphs
@@ -42,6 +48,7 @@ final class ReaderViewModel: ObservableObject {
         engine.stop()
         playbackState = .idle
         paragraphs = values.isEmpty ? ["文件内容为空"] : values
+        cachedSpeechSegments = nil
         chapters = TXTParser.chapters(in: paragraphs)
         currentParagraph = min(max(0, requestedStartIndex), paragraphs.count - 1)
     }
