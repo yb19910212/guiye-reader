@@ -54,12 +54,6 @@ jobs:
           cp -R ios/build-unsigned/GuiyeReader.app ios/package/Payload/
           (cd ios/package && zip -qry ../GuiyeReader-ios-offline-lab-unsigned.ipa Payload)
           python scripts/verify_qwen_lab.py ios/GuiyeReader-ios-offline-lab-unsigned.ipa
-      - uses: actions/upload-artifact@v4
-        with:
-          name: GuiyeReader-ios-offline-lab
-          path: ios/GuiyeReader-ios-offline-lab-unsigned.ipa
-          retention-days: 3
-          compression-level: 0
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ios-lab-${{ github.run_number }}
