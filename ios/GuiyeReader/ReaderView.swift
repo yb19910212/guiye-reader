@@ -390,6 +390,15 @@ private struct VoiceLibraryView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section("Kokoro 开源神经语音") {
+                    Text("模型已内置。选择“甜橙、蜜桃、月光、清泉”等音色后，正文始终在设备上生成语音，不上传、不需要网络。首次朗读需要稍等模型载入。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let message = model.speechMessage {
+                        Text(message).font(.caption).foregroundStyle(Color.red)
+                    }
+                    Text("Kokoro INT8 模型与 sherpa-onnx 均采用 Apache-2.0 许可。")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
                 Section {
                     Button {
                         model.chooseVoice(nil)
@@ -431,6 +440,7 @@ private struct VoiceLibraryView: View {
 
     private var languageGroups: [VoiceGroup] {
         let grouped = Dictionary(grouping: voices) { voice -> String in
+            if voice.isOpenSource { return "Kokoro 开源女声" }
             if voice.languageTag.hasPrefix("zh-CN") { return "普通话" }
             if voice.languageTag.hasPrefix("zh-HK") || voice.languageTag.hasPrefix("yue") { return "粤语" }
             if voice.languageTag.hasPrefix("zh-TW") { return "台语 / 繁体中文" }
@@ -439,7 +449,7 @@ private struct VoiceLibraryView: View {
             if voice.languageTag.hasPrefix("ko") { return "韩语" }
             return "其他语言"
         }
-        let order = ["普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
+        let order = ["Kokoro 开源女声", "普通话", "粤语", "台语 / 繁体中文", "英语", "日语", "韩语", "其他语言"]
         return order.compactMap { key in grouped[key].map { VoiceGroup(key: key, value: $0) } }
     }
 }

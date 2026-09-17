@@ -5,8 +5,13 @@ permissions:
 
 on:
   push:
-    branches: [main, "codex/**"]
+    tags: ["v*"]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: mobile-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   android:
@@ -24,14 +29,29 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.5.0"
+      - name: Bundle offline Kokoro model
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        run: |
+          curl -L --fail --retry 3 -o /tmp/kokoro.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2
+          echo "a1e94694776049035c4f2c6529f003aaece993c76aae9a78995831c3c4dcafc6  /tmp/kokoro.tar.bz2" | sha256sum -c -
+          mkdir -p android/app/src/main/assets
+          tar -xjf /tmp/kokoro.tar.bz2 -C android/app/src/main/assets
+      - name: Verify offline model with real synthesis
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        run: |
+          python3 -m pip install --disable-pip-version-check sherpa-onnx==1.13.8
+          python3 scripts/verify_kokoro.py android/app/src/main/assets/kokoro-int8-multi-lang-v1_1
       - name: Build debug APK
         working-directory: android
         run: gradle testDebugUnitTest assembleDebug
+      - name: Verify model is inside APK
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        run: unzip -l android/app/build/outputs/apk/debug/app-debug.apk | grep 'assets/kokoro-int8-multi-lang-v1_1/model.int8.onnx'
       - uses: actions/upload-artifact@v4
         with:
           name: GuiyeReader-android-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 3
+          retention-days: 1
 
   ios:
     runs-on: macos-15
@@ -44,6 +64,13 @@ jobs:
         run: |
           xcrun swiftc ios/GuiyeReader/TXTParser.swift ios/Tests/TXTParserSmoke.swift -o /tmp/txt-parser-smoke
           /tmp/txt-parser-smoke
+      - name: Prepare offline Kokoro model
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        run: |
+          curl -L --fail --retry 3 -o /tmp/kokoro.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2
+          echo "a1e94694776049035c4f2c6529f003aaece993c76aae9a78995831c3c4dcafc6  /tmp/kokoro.tar.bz2" | shasum -a 256 -c -
+          tar -xjf /tmp/kokoro.tar.bz2 -C /tmp
+          cp -R /tmp/kokoro-int8-multi-lang-v1_1/. ios/GuiyeReader/KokoroModel/
       - name: Build unsigned device app
         run: >-
           xcodebuild -project ios/GuiyeReader.xcodeproj
@@ -51,6 +78,9 @@ jobs:
           -sdk iphoneos -destination 'generic/platform=iOS'
           CONFIGURATION_BUILD_DIR="$PWD/ios/build-unsigned"
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Verify model is inside app
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        run: test -s ios/build-unsigned/GuiyeReader.app/KokoroModel/model.int8.onnx
       - name: Package unsigned IPA
         run: |
           mkdir -p ios/package/Payload
@@ -61,10 +91,10 @@ jobs:
         with:
           name: GuiyeReader-ios-unsigned
           path: ios/GuiyeReader-unsigned.ipa
-          retention-days: 3
+          retention-days: 1
 
   release:
-    if: github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: [android, ios]
     runs-on: ubuntu-latest
     steps:
@@ -80,14 +110,15 @@ jobs:
         run: mv release/app-debug.apk release/GuiyeReader-android.apk
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: Guiye Reader Build ${{ github.run_number }}
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+          name: Guiye Reader ${{ github.ref_type == 'tag' && github.ref_name || format('Build {0}', github.run_number) }}
           generate_release_notes: true
           body: |
-            自动构建版本。
+            v0.13.0：内置 Kokoro INT8 中英双语离线神经语音与多款女声，正文不会上传服务器。
 
             - `GuiyeReader-android.apk`：Android Debug 签名安装包
             - `GuiyeReader-unsigned.ipa`：iOS 未签名安装包，需要自行签名
+            - 离线模型来自 sherpa-onnx / Kokoro，Apache-2.0 许可
           files: |
             release/GuiyeReader-android.apk
             release/GuiyeReader-unsigned.ipa

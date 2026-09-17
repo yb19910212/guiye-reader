@@ -7,7 +7,8 @@ data class SpeechVoice(
     val name: String,
     val languageTag: String,
     val isNetworkRequired: Boolean,
-    val quality: Int
+    val quality: Int,
+    val provider: String = "system"
 ) {
     val qualityLabel: String get() = when {
         quality >= 500 -> "顶级"
@@ -16,6 +17,8 @@ data class SpeechVoice(
         else -> "基础"
     }
 }
+
+val SpeechVoice.isOpenSource: Boolean get() = provider == "kokoro"
 
 data class SpeechSegment(val id: Int, val text: String, val languageTag: String)
 

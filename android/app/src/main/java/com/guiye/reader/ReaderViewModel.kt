@@ -71,14 +71,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     var rate by mutableFloatStateOf(1f)
     var voices by mutableStateOf<List<SpeechVoice>>(emptyList())
     var selectedVoiceId by mutableStateOf<String?>(null)
+    var speechError by mutableStateOf<String?>(null)
+        private set
     private var textPositionSaveJob: Job? = null
 
     private val engine: AndroidTtsEngine by lazy {
         AndroidTtsEngine(
             application,
-        onSegmentStarted = { selectParagraph(it) },
+            onSegmentStarted = { selectParagraph(it) },
             onQueueCompleted = { speechState = SpeechState.IDLE },
-            onReady = { voices = engineVoices() }
+            onReady = { voices = engineVoices() },
+            onError = { message -> speechError = message; speechState = SpeechState.IDLE }
         )
     }
 
@@ -267,7 +270,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun previous() { selectParagraph((currentParagraph - 1).coerceAtLeast(0)); restartIfActive() }
     fun next() { selectParagraph((currentParagraph + 1).coerceAtMost(paragraphs.lastIndex)); restartIfActive() }
-    fun chooseVoice(id: String?) { selectedVoiceId = id; restartIfActive() }
+    fun chooseVoice(id: String?) {
+        selectedVoiceId = id
+        speechError = null
+        restartIfActive()
+    }
     fun previewVoice(voice: SpeechVoice) {
         selectedVoiceId = voice.id
         val sample = when {

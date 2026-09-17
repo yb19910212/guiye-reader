@@ -772,6 +772,10 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
         onDismissRequest = dismiss,
         title = { Text("智能语音") },
         text = { Column(Modifier.fillMaxWidth().heightIn(max = 600.dp)) {
+            Text("Kokoro 本地神经语音", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+            Text("模型已内置，选择“甜橙、蜜桃、月光、清泉”等音色后，正文始终在设备上生成语音，不上传、不需要网络。首次朗读需要稍等模型载入。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+            vm.speechError?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+            HorizontalDivider(Modifier.padding(vertical = 6.dp))
             OutlinedTextField(query, { query = it }, label = { Text("搜索音色或语言") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf("all" to "全部", "zh" to "中文", "en" to "英语", "ja" to "日语", "ko" to "韩语").forEach { (value, label) ->
@@ -788,7 +792,7 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
                     Row(Modifier.fillMaxWidth().clickable { vm.chooseVoice(voice.id) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(voice.name, style = MaterialTheme.typography.titleSmall)
-                            Text("${voice.languageTag} · ${voice.qualityLabel}${if (voice.isNetworkRequired) " · 联网" else " · 本地"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                            Text("${voice.languageTag} · ${voice.qualityLabel}${if (voice.provider == "kokoro") " · Kokoro 本地离线" else if (voice.isNetworkRequired) " · 系统联网" else " · 系统本地"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
                         }
                         if (vm.selectedVoiceId == voice.id) Text("✓", color = MaterialTheme.colorScheme.primary)
                         TextButton(onClick = { vm.previewVoice(voice) }) { Text("试听") }
@@ -800,7 +804,7 @@ private fun VoiceLibraryDialog(vm: ReaderViewModel, dismiss: () -> Unit) {
                 val intent = android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
                 runCatching { context.startActivity(intent) }.onFailure { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
             }) { Text("下载更多系统音色") }
-            Text("音色数量取决于系统语音引擎；可安装 Google、Samsung 等 TTS 引擎。", style = MaterialTheme.typography.bodySmall)
+            Text("Kokoro INT8 模型与 sherpa-onnx 均采用 Apache-2.0 许可；系统音色数量取决于设备的 TTS 引擎。", style = MaterialTheme.typography.bodySmall)
         } },
         confirmButton = { TextButton(onClick = dismiss) { Text("完成") } }
     )

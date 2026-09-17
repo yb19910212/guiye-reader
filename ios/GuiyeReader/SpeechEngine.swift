@@ -5,7 +5,20 @@ struct SpeechVoice: Identifiable, Hashable {
     let name: String
     let languageTag: String
     let quality: String
-    var qualityRank: Int { quality == "Premium" ? 3 : (quality == "增强" ? 2 : 1) }
+    let isNetworkRequired: Bool
+    let provider: String
+
+    init(id: String, name: String, languageTag: String, quality: String, isNetworkRequired: Bool = false, provider: String = "system") {
+        self.id = id
+        self.name = name
+        self.languageTag = languageTag
+        self.quality = quality
+        self.isNetworkRequired = isNetworkRequired
+        self.provider = provider
+    }
+
+    var isOpenSource: Bool { provider == "kokoro" }
+    var qualityRank: Int { provider == "kokoro" ? 4 : (quality == "Premium" ? 3 : (quality == "增强" ? 2 : 1)) }
     var languageName: String {
         let locale = Locale(identifier: "zh-Hans")
         return locale.localizedString(forIdentifier: languageTag) ?? languageTag
@@ -26,6 +39,7 @@ protocol SpeechEngine: AnyObject {
     var voices: [SpeechVoice] { get }
     var onSegmentStarted: ((Int) -> Void)? { get set }
     var onQueueCompleted: (() -> Void)? { get set }
+    var onError: ((String) -> Void)? { get set }
     func speak(segments: [SpeechSegment], from index: Int, voiceID: String?, rate: Float)
     func pause()
     func resume()

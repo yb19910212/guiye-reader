@@ -17,6 +17,7 @@ final class ReaderViewModel: ObservableObject {
     @Published var playbackState: SpeechPlaybackState = .idle
     @Published var rate: Float = 0.5
     @Published var selectedVoiceID: String?
+    @Published private(set) var speechMessage: String?
     private let engine: SystemSpeechEngine
     private let requestedStartIndex: Int
     var voices: [SpeechVoice] { engine.voices }
@@ -32,6 +33,7 @@ final class ReaderViewModel: ObservableObject {
         self.currentParagraph = min(max(0, startIndex), self.paragraphs.count - 1)
         engine.onSegmentStarted = { [weak self] index in Task { @MainActor in self?.currentParagraph = index } }
         engine.onQueueCompleted = { [weak self] in Task { @MainActor in self?.playbackState = .idle } }
+        engine.onError = { [weak self] message in Task { @MainActor in self?.speechMessage = message; self?.playbackState = .idle } }
     }
 
     func replaceParagraphs(_ values: [String]) {
@@ -66,7 +68,11 @@ final class ReaderViewModel: ObservableObject {
     func recordReadingPosition(_ index: Int) {
         currentParagraph = min(max(0, index), paragraphs.count - 1)
     }
-    func chooseVoice(_ id: String?) { selectedVoiceID = id; restartIfActive() }
+    func chooseVoice(_ id: String?) {
+        selectedVoiceID = id
+        speechMessage = nil
+        restartIfActive()
+    }
     func previewVoice(_ voice: SpeechVoice) {
         selectedVoiceID = voice.id
         let sample: String

@@ -11,11 +11,12 @@ android {
         applicationId = "com.guiye.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.12.0"
+        versionCode = 15
+        versionName = "0.13.0"
     }
 
     buildFeatures { compose = true }
+    androidResources { noCompress += listOf("onnx", "bin", "fst") }
 
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
@@ -36,6 +37,7 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.k2fsa:sherpa-onnx:1.13.8@aar")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.foundation:foundation")
