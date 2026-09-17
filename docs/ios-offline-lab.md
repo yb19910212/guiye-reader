@@ -35,3 +35,20 @@ close/reopen while cancelling, and return to library to scroll/open a book. Reco
 load/generation/audio times, listen for complete text, and inspect memory/thermal
 behavior. Simulator/tokenizer/IPA checks are NOT successful device inference.
 Do not integrate into continuous reading until this passes.
+
+## Published verification — 2026-09-17
+- Source: `4a344200ef3dd4d1dc84b2d9317e4da4c2df61b4`.
+- Actions run `35219835451` completed successfully: Python conversion, actual Swift
+  tokenizer parity, existing TXT/speech-queue tests, unsigned iOS build, packaging,
+  archive validation and prerelease publication.
+- Release: https://github.com/yb19910212/guiye-reader/releases/tag/ios-lab-1
+- Final asset `GuiyeReader-ios-offline-lab-unsigned.ipa` was downloaded from that
+  non-draft release and rechecked locally with `verify_qwen_lab.py`.
+- Size: 19,152,488 bytes. SHA256:
+  `0ec5f8a2a5114428688ae19747ebefbc0b3dcb9bad71ee18d6ef596d8bb8ee4f`, matching GitHub's digest.
+- Complete tokenizer/configs/reference WAVs and Metal library present; no bundled
+  safetensors/ONNX weights. Remote pinned weight hashes also match upstream metadata:
+  main 1,024,490,700 bytes; speech tokenizer 682,293,092 bytes (about 1.7 GB total).
+- Android and ordinary Mobile CI were intentionally not changed/rebuilt.
+- No physical iPhone was connected. This proves the missing-tokenizer repair and
+  package integrity, NOT successful on-device model inference or smooth playback.
