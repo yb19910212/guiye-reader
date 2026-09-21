@@ -390,7 +390,7 @@ struct OfflineVoiceLab: View {
                     TextField("1–40 字", text: $text, axis: .vertical).disabled(state.busy)
                     Button("在本机生成并试听") { state.test(reference: reference, text: text) }.disabled(state.busy || !state.ready)
                     Button("连续生成 20 段并记录内存") { state.testSeries(reference: reference) }.disabled(state.busy || !state.ready)
-                    Text("连续测试不读磁盘音频缓存，每段真实推理；结束后试听最后一段。保持前台，可随时取消。内存数字为 MLX 统计，不是 App 总内存。")
+                    Text("连续测试不读磁盘音频缓存，每段真实推理；结束后试听最后一段。保持前台，可随时取消。分别记录 MLX 内存和 App 内存；历史峰值仅指 MLX。")
                         .font(.caption)
                     Button("取消 / 停止并释放模型", role: .destructive) { state.stop() }
                 }

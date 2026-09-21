@@ -680,10 +680,26 @@ public class MainDecoder: Module {
 
     public func callAsFunction(_ x: MLXArray) -> MLXArray {
         var wav = initConv(x)
+#if os(iOS)
+        eval(wav)
+#endif
         wav = block0(wav)
+#if os(iOS)
+        eval(wav)
+#endif
         wav = block1(wav)
+#if os(iOS)
+        eval(wav)
+#endif
         wav = block2(wav)
+#if os(iOS)
+        eval(wav)
+#endif
         wav = block3(wav)
+#if os(iOS)
+        // Bound the lazy graph lifetime across large waveform upsampling stages.
+        eval(wav)
+#endif
         wav = outSnake(wav)
         wav = outConv(wav)
         return wav
