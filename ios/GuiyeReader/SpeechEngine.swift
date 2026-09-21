@@ -180,7 +180,10 @@ enum SpeechWAV {
 actor SpeechDiskCache {
     static let shared = SpeechDiskCache()
     private let directory: URL
-    init(directory: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("speech-v2", isDirectory: true)) { self.directory = directory }
+    private let capacity: Int
+    init(directory: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("speech-v2", isDirectory: true), capacity: Int = 200 * 1024 * 1024) {
+        self.directory = directory; self.capacity = capacity
+    }
     func file(identity: String) throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let name = SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -189,13 +192,24 @@ actor SpeechDiskCache {
     func read(_ file: URL) -> Double? {
         guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 8 * 1024 * 1024,
               let data = try? Data(contentsOf: file), let duration = try? SpeechWAV.duration(data) else { try? FileManager.default.removeItem(at: file); return nil }
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
         return duration
     }
-    func save(_ data: Data, to file: URL) throws -> Double {
+    func save(_ data: Data, to file: URL, protecting: Set<URL> = []) throws -> Double {
         let duration = try SpeechWAV.duration(data)
-        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])
-        let used = files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
-        guard used + data.count <= 200 * 1024 * 1024 else { throw NSError(domain: "SpeechCache", code: 1, userInfo: [NSLocalizedDescriptionKey: "语音缓存已达 200 MB，请清理缓存后重试"]) }
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]).filter { $0.pathExtension == "wav" }
+        let entries = files.map { url -> (URL, Int, Date) in
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            return (url, values?.fileSize ?? 0, values?.contentModificationDate ?? .distantPast)
+        }
+        var used = entries.reduce(0) { $0 + ($1.0 == file ? 0 : $1.1) }
+        let victims = entries.filter { $0.0 != file && !protecting.contains($0.0) }.sorted { $0.2 < $1.2 }
+        guard used + data.count - victims.reduce(0, { $0 + $1.1 }) <= capacity else {
+            throw NSError(domain: "SpeechCache", code: 1, userInfo: [NSLocalizedDescriptionKey: "当前章节待播音频已超过缓存预算，请改用边生成边播放；无需清空全部缓存"])
+        }
+        for victim in victims where used + data.count > capacity {
+            try FileManager.default.removeItem(at: victim.0); used -= victim.1
+        }
         try data.write(to: file, options: .atomic)
         return duration
     }

@@ -59,6 +59,22 @@ import Foundation
         do { _ = try await cache.save(Data(wav.dropLast()), to: other); preconditionFailure("accepted truncated audio") } catch {}
         let absent = await cache.read(other); precondition(absent == nil)
         try await cache.clear()
+        let bounded = SpeechDiskCache(directory: directory, capacity: wav.count * 3)
+        let protected = try await bounded.file(identity: "currently-playing")
+        _ = try await bounded.save(wav, to: protected)
+        for number in 0..<200 {
+            let next = try await bounded.file(identity: "continuous-\(number)")
+            _ = try await bounded.save(wav, to: next, protecting: [protected])
+            let kept = await bounded.read(protected)
+            precondition(kept != nil, "evicted currently playing audio")
+            let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            precondition(files.count <= 3, "unbounded disk cache")
+        }
+        _ = try await bounded.save(wav, to: protected, protecting: [protected])
+        let tiny = SpeechDiskCache(directory: directory, capacity: wav.count - 1)
+        do { _ = try await tiny.save(wav, to: protected, protecting: [protected]); preconditionFailure("accepted oversized entry") } catch {}
+        let preserved = await bounded.read(protected); precondition(preserved != nil)
+        try await bounded.clear()
         precondition(!FileManager.default.fileExists(atPath: directory.path))
         var cursor = SpeechChunkCursor(segments: [.init(id: 0, text: "skip", languageTag: "en"), .init(id: 9, text: "read", languageTag: "en")], from: 1)
         precondition(cursor.next()?.id == 9)

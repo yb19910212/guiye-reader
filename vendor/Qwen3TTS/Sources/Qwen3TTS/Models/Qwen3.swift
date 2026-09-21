@@ -1054,7 +1054,7 @@ public class Qwen3TTSModel: Module {
         let effectiveMaxTokens = min(maxTokens, max(75, targetTokenCount * 6))
 
         // 2. Initialize cache and generation state
-        let cache = talker.makeCache()
+        var cache = talker.makeCache()
         var generatedCodes: [[MLXArray]] = []
         var generatedTokens: [Int] = []
         let eosTokenId = talkerConfig.codecEosTokenId
@@ -1144,6 +1144,8 @@ public class Qwen3TTSModel: Module {
                 codeTokens.append(nextCode)
             }
 
+            // Materialize retained codes before releasing each predictor cache.
+            eval(codeTokens)
             // Stack all codebook tokens
             generatedCodes.append(codeTokens)
 
@@ -1180,6 +1182,13 @@ public class Qwen3TTSModel: Module {
             generatedCodes.map { codes in MLX.concatenated(codes, axis: 1) },
             axis: 1
         )
+
+        // Release autoregressive KV state before the memory-heavy audio decoder.
+        eval(genCodesStacked)
+        generatedCodes.removeAll()
+        cache.removeAll()
+        currentInput = MLXArray.zeros([1])
+        GPU.clearCache()
 
         // 5. Prepend reference codes for decoding
         // ref_codes: [1, 16, ref_time] -> [1, ref_time, 16]

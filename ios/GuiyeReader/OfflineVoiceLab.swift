@@ -5,6 +5,19 @@ import CryptoKit
 import MLX
 import Qwen3TTS
 import UniformTypeIdentifiers
+import Darwin
+
+func localSpeechFootprint() -> String {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+    let capacity = Int(count)
+    let result = withUnsafeMutablePointer(to: &info) { pointer in
+        pointer.withMemoryRebound(to: integer_t.self, capacity: capacity) {
+            task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+        }
+    }
+    return result == KERN_SUCCESS ? String(format: "App 内存 %.0f MB", Double(info.phys_footprint) / 1_048_576) : "App 内存不可用"
+}
 
 private func labError(_ message: String) -> NSError {
     NSError(domain: "OfflineVoiceLab", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
@@ -177,7 +190,7 @@ actor OfflineLabWorker {
         try await prepare(download: false, report: report)
     }
 
-    struct Result: Sendable { let data: Data; let load: Double; let generate: Double; let audio: Double }
+    struct Result: Sendable { let data: Data; let load: Double; let generate: Double; let audio: Double; let memory: String }
     func test(reference: String, text: String, cancellation: LabCancellation,
               report: @escaping @Sendable (String) -> Void) async throws -> Result {
         guard ["gentle", "coaxing"].contains(reference) else { throw labError("无效音色") }
@@ -199,16 +212,21 @@ actor OfflineLabWorker {
         let start = Date()
         let cancelled = { cancellation.cancelled || Date().timeIntervalSince(start) > 120 }
         guard !cancelled() else { throw CancellationError() }
-        GPU.set(cacheLimit: 32 * 1024 * 1024)
+        GPU.set(cacheLimit: 8 * 1024 * 1024)
         report(model == nil ? "检查分词器并加载模型（首次较慢）" : "复用已加载模型")
         if model == nil { model = try await Qwen3TTSModel.fromPretrained(directory.path, shouldCancel: cancelled) }
         guard !cancelled(), let model else { throw CancellationError() }
         let load = Date().timeIntervalSince(start)
+        let before = GPU.activeMemory
+        let footprintBefore = localSpeechFootprint()
+        // Keep MLX arrays and Objective-C temporary objects inside this scope.
+        // Cache clearing happens only after arrays/audio have been released.
+        let generatedAt = Date()
+        let rendered: (Data, Double) = try autoreleasepool {
         let (rate, referenceAudio) = try loadAudioArray(from: Bundle.main.bundleURL.appendingPathComponent("VoiceReferences/\(reference).wav"))
         guard rate == 24_000 else { throw labError("参考录音采样率不匹配") }
         report("生成语音：0 帧")
         var frames = 0
-        let generatedAt = Date()
         let audio = try model.generateVoiceClone(text: text, referenceAudio: referenceAudio,
             referenceText: "你回来啦，今天辛苦了。要不要坐下来，让我陪你读一会儿书？别着急，今晚的故事，我们慢慢听。",
             language: "chinese", temperature: 0.7, maxTokens: 384,
@@ -219,7 +237,12 @@ actor OfflineLabWorker {
         let samples = audio.asArray(Float.self)
         guard !samples.isEmpty, samples.allSatisfy({ $0.isFinite }) else { throw labError("模型返回无效音频") }
         let data = try SpeechWAV.encode(samples: samples)
-        return Result(data: data, load: load, generate: Date().timeIntervalSince(generatedAt), audio: Double(samples.count) / 24_000)
+        return (data, Double(samples.count) / 24_000)
+        }
+        GPU.clearCache()
+        let memory = String(format: "MLX 活跃内存 %.0f → %.0f MB · MLX 历史峰值 %.0f MB", Double(before) / 1_048_576, Double(GPU.activeMemory) / 1_048_576, Double(GPU.peakMemory) / 1_048_576) + " · " + footprintBefore + " → " + localSpeechFootprint()
+        report(memory)
+        return Result(data: rendered.0, load: load, generate: Date().timeIntervalSince(generatedAt), audio: rendered.1, memory: memory)
     }
     func release() {
         if generating { releaseRequested = true }
@@ -236,6 +259,7 @@ private final class OfflineLabState: ObservableObject {
     @Published var ready = false
     @Published var startedAt = Date()
     @Published var result = ""
+    @Published var seriesLog = ""
     private var task: Task<Void, Never>?
     private var cancellation = LabCancellation()
     private var player: AVAudioPlayer?
@@ -254,9 +278,28 @@ private final class OfflineLabState: ObservableObject {
         guard ProcessInfo.processInfo.thermalState != .serious, ProcessInfo.processInfo.thermalState != .critical else { status = "设备温度较高，请降温后再试"; return }
         begin(label: "语音测试") { report, token in try await OfflineLabWorker.shared.test(reference: reference, text: text, cancellation: token, report: report) }
     }
+    func testSeries(reference: String) {
+        guard ready else { status = "请先校验内置模型"; return }
+        begin(label: "语音测试") { report, token in
+            let sentences = ["早晨的阳光照进书房，桌上放着一本还没读完的书。", "窗外很安静，偶尔能听见微风吹过树叶的声音。", "她翻开下一页，把刚才想到的问题记在纸上。", "不必急着读完，理解每一段的意思同样重要。"]
+            var latest: OfflineLabWorker.Result?
+            var lines: [String] = []
+            for index in 0..<20 {
+                try Task.checkCancellation()
+                guard !token.cancelled else { throw CancellationError() }
+                guard ProcessInfo.processInfo.thermalState != .serious, ProcessInfo.processInfo.thermalState != .critical else { throw labError("连续测试因设备高温停止，请降温后重试") }
+                let output = try await OfflineLabWorker.shared.test(reference: reference, text: sentences[index % sentences.count], cancellation: token) { message in report("连续测试 \(index + 1)/20 · \(message)") }
+                latest = output
+                lines.append(String(format: "%02d · 生成 %.1fs / 音频 %.1fs · ", index + 1, output.generate, output.audio) + output.memory)
+                let snapshot = lines.joined(separator: "\n")
+                await MainActor.run { if !token.cancelled { OfflineLabState.shared.seriesLog = snapshot } }
+            }
+            return latest
+        }
+    }
     private func begin(label: String, _ operation: @escaping @Sendable (@escaping @Sendable (String) -> Void, LabCancellation) async throws -> OfflineLabWorker.Result?) {
         guard !busy else { return }
-        player?.stop(); player = nil; busy = true; result = ""; startedAt = Date()
+        player?.stop(); player = nil; busy = true; result = ""; seriesLog = ""; startedAt = Date()
         status = "正在准备\(label)…"
         if label != "语音测试" { ready = false }
         cancellation = LabCancellation()
@@ -270,6 +313,7 @@ private final class OfflineLabState: ObservableObject {
                 guard !token.cancelled else { throw CancellationError() }
                 if let output {
                     result = String(format: "模型加载 %.1f 秒 · 生成 %.1f 秒 · 音频 %.1f 秒\n生成耗时/音频时长 %.2f（小于 1 才有连续播放的基础）", output.load, output.generate, output.audio, output.generate / output.audio)
+                    result += "\n" + output.memory
                     try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
                     try AVAudioSession.sharedInstance().setActive(true)
                     player = try AVAudioPlayer(data: output.data)
@@ -345,6 +389,9 @@ struct OfflineVoiceLab: View {
                     }.disabled(state.busy)
                     TextField("1–40 字", text: $text, axis: .vertical).disabled(state.busy)
                     Button("在本机生成并试听") { state.test(reference: reference, text: text) }.disabled(state.busy || !state.ready)
+                    Button("连续生成 20 段并记录内存") { state.testSeries(reference: reference) }.disabled(state.busy || !state.ready)
+                    Text("连续测试不读磁盘音频缓存，每段真实推理；结束后试听最后一段。保持前台，可随时取消。内存数字为 MLX 统计，不是 App 总内存。")
+                        .font(.caption)
                     Button("取消 / 停止并释放模型", role: .destructive) { state.stop() }
                 }
                 Section("实时状态") {
@@ -356,6 +403,7 @@ struct OfflineVoiceLab: View {
                         }
                     }
                     if !state.result.isEmpty { Text(state.result).textSelection(.enabled) }
+                    if !state.seriesLog.isEmpty { Text(state.seriesLog).font(.caption).textSelection(.enabled) }
                 }
             }
             .navigationTitle("离线语音实验室")

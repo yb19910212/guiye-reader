@@ -28,6 +28,6 @@ for phase, entry in [('PBXSourcesBuildPhase', 'EE000000000000000000000B,EE000000
 text = text.replace('packageReferences = (', 'packageReferences = (EE0000000000000000000007,')
 text = text.replace('packageProductDependencies = (', 'packageProductDependencies = (EE0000000000000000000008,')
 text = text.replace('SWIFT_VERSION = 5.0;', 'SWIFT_VERSION = 5.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) QWEN_LAB";')
-text = text.replace('CURRENT_PROJECT_VERSION = 21;', 'CURRENT_PROJECT_VERSION = 25;')
-text = text.replace('MARKETING_VERSION = 0.16.0;', 'MARKETING_VERSION = 0.18.0;')
+text = text.replace('CURRENT_PROJECT_VERSION = 21;', 'CURRENT_PROJECT_VERSION = 26;')
+text = text.replace('MARKETING_VERSION = 0.16.0;', 'MARKETING_VERSION = 0.18.1;')
 path.write_text(text, encoding='utf-8')

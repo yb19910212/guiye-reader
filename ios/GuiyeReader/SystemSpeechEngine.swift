@@ -58,6 +58,8 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private var generation: Task<Void, Never>?
     private var generationID = UUID()
     private var player: AVAudioPlayer?
+    private var playerFile: URL?
+    private var pendingFailure: String?
     private var activeUtterance: AVSpeechUtterance?
     private var queue: [SpeechSegment] = []
     private var index = 0
@@ -92,8 +94,12 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         for notification in [UIApplication.willResignActiveNotification, UIApplication.didReceiveMemoryWarningNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: notification, object: nil, queue: .main) { [weak self] _ in
                 guard let self, self.isLocal, !self.queue.isEmpty else { return }
-                self.stop()
-                self.onError?("本地语音已安全停止（离开前台或内存紧张），缓存保留。返回后可继续；锁屏听书请选择 API 或系统语音。")
+                if notification == UIApplication.didReceiveMemoryWarningNotification {
+                    self.drainAfterFailure("收到 iOS 内存警告（\(localSpeechFootprint())）：已取消生成，等待计算退出后释放模型；已备音频播放后暂停，缓存和位置保留。不必清理磁盘缓存。")
+                } else {
+                    self.stop()
+                    self.onError?("应用失去前台活动状态，本地推理已停止；缓存保留。此提示不是内存警告。")
+                }
             })
         }
 #endif
@@ -187,7 +193,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     guard owner.generationID == id, let audio else { return }
                     owner.progress.phase = "校验并保存音频"
                     owner.onProgress?(owner.progress)
-                    let duration = try await SpeechDiskCache.shared.save(audio, to: cachedFile)
+                    let duration = try await SpeechDiskCache.shared.save(audio, to: cachedFile, protecting: owner.protectedFiles)
                     try Task.checkCancellation()
                     owner.accept(segment, file: cachedFile, duration: duration, cached: false)
                 }
@@ -250,10 +256,10 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     }
                     try Task.checkCancellation()
                     guard owner.generationID == id, !token.cancelled else { return }
-                    let duration = try await SpeechDiskCache.shared.save(output.data, to: file)
+                    let duration = try await SpeechDiskCache.shared.save(output.data, to: file, protecting: owner.protectedFiles)
                     try Task.checkCancellation()
                     guard owner.generationID == id, !token.cancelled else { return }
-                    owner.progress.localTiming = String(format: "最近生成 %.1f 秒 / 音频 %.1f 秒 · 耗时比 %.2f · 加载 %.1f 秒", output.generate, output.audio, output.generate / max(0.01, output.audio), output.load)
+                    owner.progress.localTiming = String(format: "最近生成 %.1f 秒 / 音频 %.1f 秒 · 耗时比 %.2f · 加载 %.1f 秒\n", output.generate, output.audio, output.generate / max(0.01, output.audio), output.load) + output.memory
                     owner.accept(segment, file: file, duration: duration, cached: false)
                 }
                 guard let owner = self, owner.generationID == id, !token.cancelled else { return }
@@ -261,12 +267,27 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                 owner.progress.requestStartedAt = nil; owner.playReady()
             } catch {
                 guard !Task.isCancelled, !token.cancelled, let owner = self, owner.generationID == id else { return }
-                var failed = owner.progress; failed.phase = "本地生成已停止；已完成缓存保留"; failed.requestStartedAt = nil
-                owner.stop(); owner.onProgress?(failed); owner.onError?(error.localizedDescription)
+                owner.drainAfterFailure(error.localizedDescription)
             }
         }
     }
 #endif
+    private var protectedFiles: Set<URL> {
+        Set(ready.map { $0.1 } + (playerFile.map { [$0] } ?? []))
+    }
+    private func drainAfterFailure(_ message: String) {
+#if QWEN_LAB
+        localCancellation?.cancel()
+        localCancellation = nil
+        Task { await OfflineLabWorker.shared.release() }
+#endif
+        generationID = UUID(); generation?.cancel(); generation = nil
+        pendingFailure = message; ended = true; preparing = false
+        progress.preparingChapter = false; progress.requestStartedAt = nil
+        progress.phase = "生成已停止；播放已备音频后暂停"; progress.measuredAt = Date()
+        onProgress?(progress); onStatus?(message)
+        playReady()
+    }
     private func accept(_ segment: SpeechSegment, file: URL, duration: Double, cached: Bool) {
         progress.completed += 1; progress.cached += cached ? 1 : 0
         progress.characters += segment.text.count; progress.audioSeconds += duration
@@ -288,7 +309,11 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             return
         }
         guard !ready.isEmpty else {
-            if ended { stop(); onQueueCompleted?() }
+            if ended {
+                let failure = pendingFailure
+                stop()
+                if let failure { onError?(failure) } else { onQueueCompleted?() }
+            }
             else { onStatus?("等待下一段语音，可继续阅读或暂停") }
             return
         }
@@ -300,9 +325,10 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             next.delegate = self; next.enableRate = true
             next.rate = min(max(0.6 + (rate - 0.35) / 0.30, 0.6), 1.6)
             player = next
+            playerFile = file
             guard next.play() else { throw SpeechAPIError(message: "音频无法播放") }
             progress.phase = "正在播放"; progress.played += 1; onProgress?(progress)
-            onStatus?(nil); onSegmentStarted?(segment.id)
+            onStatus?(pendingFailure); onSegmentStarted?(segment.id)
         } catch { stop(); onError?(error.localizedDescription) }
     }
     func pause() { paused = true; progress.phase = "已暂停（当前请求可能仍在完成）"; onProgress?(progress); player?.pause(); system.pauseSpeaking(at: .word) }
@@ -321,6 +347,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
 #endif
         generationID = UUID(); generation?.cancel(); generation = nil
         player?.delegate = nil; player?.stop(); player = nil
+        playerFile = nil; pendingFailure = nil
         activeUtterance = nil; system.stopSpeaking(at: .immediate)
         ready.removeAll(); queue.removeAll(); paused = false; ended = false; preparing = false; onProgress?(nil); onStatus?(nil)
     }
@@ -335,6 +362,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         guard self.player === player else { return }
         self.player = nil
+        playerFile = nil
         if flag { playReady() } else { stop(); onError?("语音播放中断") }
     }
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
