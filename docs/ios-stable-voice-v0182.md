@@ -17,3 +17,11 @@
 ## 验收
 
 自动化覆盖24字符完整重组、单段起播、缓存淘汰与现有回归。真机需分别完成1号/4号连续20段实验，并进行15分钟TXT正文朗读；记录每段App内存、是否持续上涨、内存警告和段间等待。CI和IPA校验不能替代该验收。
+
+## 发布核验 2026-09-24
+
+- 源码 `19cd8f82f3717530c52d02d669b9f22878954eee`；v0.18.2/build27。
+- Actions `35944527648` 全部成功：固定模型校验、分词器一致性、Swift回归、Xcode编译、IPA校验及Release发布。
+- Release `ios-lab-10` 为非草稿预发布；最终IPA 1471250253字节。
+- 下载最终资产后再次验证全部模型/资源哈希、Metal、分词器、参考音频及ZIP CRC；SHA256 `e49d0b6bd1ce01f575511be5d1b1d407cc0078cef0f4683f772a1d40c0d8b7fb`。
+- Windows/GitHub runner无法代替iPhone Metal连续推理；是否避免5413MB内存警告仍待iPhone 17 Pro Max实测。Android未修改或重建，IPA未签名。
