@@ -9,8 +9,8 @@ from prepare_qwen_model import HASHES
 with zipfile.ZipFile(sys.argv[1]) as package:
     base = 'Payload/GuiyeReader.app/'
     info = plistlib.loads(package.read(base + 'Info.plist'))
-    assert info['CFBundleShortVersionString'] == '0.18.1'
-    assert str(info['CFBundleVersion']) == '26'
+    assert info['CFBundleShortVersionString'] == '0.18.2'
+    assert str(info['CFBundleVersion']) == '27'
     names = package.namelist()
     for name in HASHES:
         assert package.getinfo(base + 'QwenSupport/' + name).file_size > 600_000_000, name

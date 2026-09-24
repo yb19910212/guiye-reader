@@ -211,8 +211,8 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
         let id = generationID
         let token = LabCancellation(); localCancellation = token
         let reference = voiceID == "qwen:coaxing" ? "coaxing" : "gentle"
-        var cursor = SpeechChunkCursor(segments: segments, from: index, maxCharacters: 40)
-        preroll = SpeechPreroll(); preparing = chapter
+        var cursor = SpeechChunkCursor(segments: segments, from: index, maxCharacters: 24)
+        preroll = SpeechPreroll(required: 1); preparing = chapter
         progress = SpeechProgress(); progress.preparingChapter = chapter
         if chapter {
             var counter = cursor
@@ -222,12 +222,12 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
             }
         }
         onProgress?(progress)
-        onStatus?(chapter ? "本机缓存整章后播放；请保持前台，正文不上传" : "本机先准备两段再播放；正文不上传，请保持前台")
+        onStatus?(chapter ? "稳定模式缓存整章：每段生成后释放模型；请保持前台" : "稳定模式：每段生成后释放模型，先准备一段播放；可能短暂等待")
         generation = Task { @MainActor [weak self] in
             do {
                 while let segment = cursor.next() {
                     try Task.checkCancellation()
-                    while let owner = self, (!chapter && owner.ready.count >= 2) || owner.paused {
+                    while let owner = self, (!chapter && owner.ready.count >= 1) || owner.paused {
                         try await Task.sleep(for: .milliseconds(100))
                     }
                     guard let owner = self, owner.generationID == id, !token.cancelled else { return }
@@ -235,7 +235,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     owner.progress.requestStartedAt = Date(); owner.onProgress?(owner.progress)
                     // Independent from remote API identity; version includes all synthesis settings.
                     let identity = String(data: try JSONSerialization.data(withJSONObject:
-                        ["ios-qwen-pcm16-v1-40chars-temp0.7-max384", "0d6bb6fe33f92d47a507e23b9148940e8366ab5b", reference, segment.text]), encoding: .utf8)!
+                        ["ios-qwen-pcm16-v2-24chars-stable-temp0.7-max384", "0d6bb6fe33f92d47a507e23b9148940e8366ab5b", reference, segment.text]), encoding: .utf8)!
                     let file = try await SpeechDiskCache.shared.file(identity: identity)
                     let cachedDuration = await SpeechDiskCache.shared.read(file)
                     try Task.checkCancellation()
@@ -248,7 +248,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
                     guard ProcessInfo.processInfo.thermalState != .serious, ProcessInfo.processInfo.thermalState != .critical else {
                         throw SpeechAPIError(message: "设备温度较高，已停止本地生成；缓存保留，请降温后继续")
                     }
-                    let output = try await OfflineLabWorker.shared.test(reference: reference, text: segment.text, cancellation: token) { message in
+                    let output = try await OfflineLabWorker.shared.test(reference: reference, text: segment.text, cancellation: token, keepModel: false) { message in
                         Task { @MainActor [weak self] in
                             guard let owner = self, owner.generationID == id, !token.cancelled else { return }
                             owner.progress.phase = message; owner.onProgress?(owner.progress)
@@ -305,7 +305,7 @@ final class SystemSpeechEngine: NSObject, SpeechEngine, AVSpeechSynthesizerDeleg
     private func playReady() {
         guard !preparing, !paused, player == nil else { return }
         if isLocal && !preroll.canPlay(ready: ready.count, ended: ended) && !(ended && ready.isEmpty) {
-            onStatus?("正在补充本地缓冲 \(ready.count)/2 段；可继续阅读。倍速越高越容易等待。")
+            onStatus?("稳定模式正在准备下一段；模型会逐段释放，可能短暂等待。")
             return
         }
         guard !ready.isEmpty else {

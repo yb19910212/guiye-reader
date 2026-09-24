@@ -115,10 +115,12 @@ struct SpeechChunkCursor {
 }
 
 struct SpeechPreroll {
+    let required: Int
     private(set) var waiting = true
+    init(required: Int = 2) { self.required = max(1, required) }
     mutating func canPlay(ready: Int, ended: Bool) -> Bool {
         if ready == 0 { waiting = true; return false }
-        if waiting && ready < 2 && !ended { return false }
+        if waiting && ready < required && !ended { return false }
         waiting = false
         return true
     }

@@ -10,6 +10,10 @@ import Foundation
             localJoined += chunk.text
         }
         precondition(localJoined == longText)
+        var stableCursor = SpeechChunkCursor(segments: [.init(id: 7, text: longText, languageTag: "zh-CN")], from: 0, maxCharacters: 24)
+        var stableJoined = ""
+        while let chunk = stableCursor.next() { precondition(chunk.text.count <= 24); stableJoined += chunk.text }
+        precondition(stableJoined == longText)
         var preroll = SpeechPreroll()
         precondition(!preroll.canPlay(ready: 0, ended: false))
         precondition(!preroll.canPlay(ready: 1, ended: false))
@@ -19,6 +23,9 @@ import Foundation
         precondition(!preroll.canPlay(ready: 1, ended: false))
         precondition(preroll.canPlay(ready: 1, ended: true))
         precondition(!preroll.canPlay(ready: 0, ended: true))
+        var stablePreroll = SpeechPreroll(required: 1)
+        precondition(!stablePreroll.canPlay(ready: 0, ended: false))
+        precondition(stablePreroll.canPlay(ready: 1, ended: false))
         let encoded = try SpeechWAV.encode(samples: Array(repeating: 0.5, count: 24_000))
         precondition((try? SpeechWAV.duration(encoded)) == 1)
         let clipped = try SpeechWAV.encode(samples: [-2, 0, 2])

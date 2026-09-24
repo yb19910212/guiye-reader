@@ -425,8 +425,8 @@ private struct VoiceLibraryView: View {
             List {
 #if QWEN_LAB
                 Section("本地离线语音 · 正文实验版") {
-                    Text("选择下方本地 1号/4号后，返回正文点击播放。无需 API 密钥或网络，不上传正文；先缓存两段，再边播放边生成。也可缓存本章后播放。")
-                    Text("模型只在主动朗读时加载，段间复用。暂限前台：锁屏、切到后台或内存紧张会安全停止，已完成缓存保留。建议先用 1×，长时间连续播放仍需真机验收。")
+                    Text("选择下方本地 1号/4号后，返回正文点击播放。无需 API 密钥或网络，不上传正文；稳定模式先准备一段，再边播放边生成。")
+                    Text("为降低连续内存占用，正文每段生成后会释放模型，下一段重新加载，可能短暂停顿。暂限前台；缓存和位置会保留。建议先用 1×，长时间连续播放仍需真机验收。")
                         .font(.caption).foregroundStyle(.secondary)
                     if model.selectedVoiceID?.hasPrefix("qwen:") == true {
                         if let message = model.speechMessage { Text(message).font(.caption) }

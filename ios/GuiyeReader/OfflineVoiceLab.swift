@@ -191,7 +191,7 @@ actor OfflineLabWorker {
     }
 
     struct Result: Sendable { let data: Data; let load: Double; let generate: Double; let audio: Double; let memory: String }
-    func test(reference: String, text: String, cancellation: LabCancellation,
+    func test(reference: String, text: String, cancellation: LabCancellation, keepModel: Bool = true,
               report: @escaping @Sendable (String) -> Void) async throws -> Result {
         guard ["gentle", "coaxing"].contains(reference) else { throw labError("无效音色") }
         // Actor methods can reenter during asynchronous model loading. Explicitly
@@ -205,7 +205,7 @@ actor OfflineLabWorker {
         generating = true
         defer {
             generating = false
-            if releaseRequested { model = nil; GPU.clearCache(); releaseRequested = false }
+            if releaseRequested || !keepModel { model = nil; GPU.clearCache(); releaseRequested = false }
         }
         if !verified { try await prepare(download: false, report: report); verified = true }
         guard ProcessInfo.processInfo.physicalMemory >= 6_000_000_000 else { throw labError("实验模型至少需要 6 GB 设备内存，请继续使用 API 或系统语音") }
@@ -213,6 +213,7 @@ actor OfflineLabWorker {
         let cancelled = { cancellation.cancelled || Date().timeIntervalSince(start) > 120 }
         guard !cancelled() else { throw CancellationError() }
         GPU.set(cacheLimit: 8 * 1024 * 1024)
+        if model == nil { GPU.clearCache() }
         report(model == nil ? "检查分词器并加载模型（首次较慢）" : "复用已加载模型")
         if model == nil { model = try await Qwen3TTSModel.fromPretrained(directory.path, shouldCancel: cancelled) }
         guard !cancelled(), let model else { throw CancellationError() }
@@ -288,7 +289,7 @@ private final class OfflineLabState: ObservableObject {
                 try Task.checkCancellation()
                 guard !token.cancelled else { throw CancellationError() }
                 guard ProcessInfo.processInfo.thermalState != .serious, ProcessInfo.processInfo.thermalState != .critical else { throw labError("连续测试因设备高温停止，请降温后重试") }
-                let output = try await OfflineLabWorker.shared.test(reference: reference, text: sentences[index % sentences.count], cancellation: token) { message in report("连续测试 \(index + 1)/20 · \(message)") }
+                let output = try await OfflineLabWorker.shared.test(reference: reference, text: sentences[index % sentences.count], cancellation: token, keepModel: false) { message in report("连续测试 \(index + 1)/20 · 稳定模式 · \(message)") }
                 latest = output
                 lines.append(String(format: "%02d · 生成 %.1fs / 音频 %.1fs · ", index + 1, output.generate, output.audio) + output.memory)
                 let snapshot = lines.joined(separator: "\n")
