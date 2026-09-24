@@ -216,7 +216,7 @@ actor OfflineLabWorker {
         if model == nil { GPU.clearCache() }
         report(model == nil ? "检查分词器并加载模型（首次较慢）" : "复用已加载模型")
         if model == nil { model = try await Qwen3TTSModel.fromPretrained(directory.path, shouldCancel: cancelled) }
-        guard !cancelled(), let model else { throw CancellationError() }
+        guard !cancelled(), model != nil else { throw CancellationError() }
         let load = Date().timeIntervalSince(start)
         let before = GPU.activeMemory
         let footprintBefore = localSpeechFootprint()
@@ -228,7 +228,7 @@ actor OfflineLabWorker {
         guard rate == 24_000 else { throw labError("参考录音采样率不匹配") }
         report("生成语音：0 帧")
         var frames = 0
-        let audio = try model.generateVoiceClone(text: text, referenceAudio: referenceAudio,
+        let audio = try self.model!.generateVoiceClone(text: text, referenceAudio: referenceAudio,
             referenceText: "你回来啦，今天辛苦了。要不要坐下来，让我陪你读一会儿书？别着急，今晚的故事，我们慢慢听。",
             language: "chinese", temperature: 0.7, maxTokens: 384,
             onToken: { _ in frames += 1; if frames % 8 == 0 { report("生成语音：\(frames) 帧（不是下载进度）") } },
@@ -240,6 +240,7 @@ actor OfflineLabWorker {
         let data = try SpeechWAV.encode(samples: samples)
         return (data, Double(samples.count) / 24_000)
         }
+        if !keepModel { model = nil }
         GPU.clearCache()
         let memory = String(format: "MLX 活跃内存 %.0f → %.0f MB · MLX 历史峰值 %.0f MB", Double(before) / 1_048_576, Double(GPU.activeMemory) / 1_048_576, Double(GPU.peakMemory) / 1_048_576) + " · " + footprintBefore + " → " + localSpeechFootprint()
         report(memory)
